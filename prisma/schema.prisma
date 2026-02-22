@@ -1,0 +1,51 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Server {
+  id        String    @id @default(cuid())
+  name      String
+  discordId String    @unique
+  addedAt   DateTime  @default(now())
+  channels  Channel[]
+}
+
+model Channel {
+  id          String      @id @default(cuid())
+  name        String
+  discordId   String      @unique
+  serverId    String
+  server      Server      @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  enabled     Boolean     @default(true)
+  scrapeEvery Int         @default(7)
+  lastScraped DateTime?
+  jobs        ScrapeJob[]
+}
+
+model ScrapeJob {
+  id           String    @id @default(cuid())
+  channelId    String
+  channel      Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  status       String    @default("pending")
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  messageCount Int?
+  outputPath   String?
+  errorLog     String?
+  createdAt    DateTime  @default(now())
+}
+
+model AppConfig {
+  id           String @id @default("singleton")
+  discordToken String @default("")
+  exportFormat String @default("Json")
+  outputDir    String @default("./exports")
+}

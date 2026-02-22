@@ -1,0 +1,103 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* 8-Bit Retro Palette */
+  --color-bg: #0f0f23;
+  --color-fg: #e8e8e8;
+  --color-accent-green: #00ff41;
+  --color-accent-amber: #ffb000;
+  --color-accent-red: #ff004d;
+  --color-accent-blue: #29adff;
+  --color-border: #2a2a4a;
+
+  /* CSS Colors */
+  --background: #0f0f23;
+  --foreground: #e8e8e8;
+  --primary: #00ff41;
+  --primary-foreground: #0f0f23;
+  --secondary: #29adff;
+  --secondary-foreground: #0f0f23;
+  --accent: #ffb000;
+  --accent-foreground: #0f0f23;
+  --destructive: #ff004d;
+  --card: #1a1a32;
+  --card-foreground: #e8e8e8;
+  --border: #2a2a4a;
+  --input: #1a1a32;
+  --muted: #4a4a6a;
+  --muted-foreground: #a8a8c8;
+}
+
+@theme inline {
+  --color-background: #0f0f23;
+  --color-foreground: #e8e8e8;
+  --color-primary: #00ff41;
+  --color-primary-foreground: #0f0f23;
+  --color-secondary: #29adff;
+  --color-secondary-foreground: #0f0f23;
+  --color-accent: #ffb000;
+  --color-accent-foreground: #0f0f23;
+  --color-destructive: #ff004d;
+  --color-card: #1a1a32;
+  --color-card-foreground: #e8e8e8;
+  --color-border: #2a2a4a;
+  --color-input: #1a1a32;
+  --color-muted: #4a4a6a;
+  --color-muted-foreground: #a8a8c8;
+  --color-ring: #00ff41;
+  --radius: 0px;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-[#0f0f23] text-[#e8e8e8] font-mono;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: monospace;
+    letter-spacing: 2px;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    font-weight: 700;
+  }
+
+  h1 { @apply text-2xl; }
+  h2 { @apply text-xl; }
+  h3 { @apply text-lg; }
+}
+
+/* Pixel Borders & Shadows */
+.pixel-border {
+  border: 2px solid #2a2a4a;
+  box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.5);
+}
+
+.pixel-border-green {
+  border: 2px solid #00ff41;
+  box-shadow: 4px 4px 0px rgba(0, 255, 65, 0.3);
+}
+
+.pixel-button {
+  @apply px-4 py-2 bg-[#00ff41] text-[#0f0f23] font-bold border-2 border-[#00ff41];
+  box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.5);
+  transition: all 50ms linear;
+
+  &:active {
+    box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.5);
+    transform: translate(2px, 2px);
+  }
+}
+
+.pixel-card {
+  @apply bg-[#1a1a32] text-[#e8e8e8] p-4;
+  border: 2px solid #2a2a4a;
+  box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.5);
+}
