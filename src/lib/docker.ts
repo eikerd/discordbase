@@ -119,6 +119,18 @@ export async function ensureImage(): Promise<void> {
   })
 }
 
+// Exported so other modules can resolve the output directory without duplicating
+// the path-sanitisation logic that lives here.
+export function getChannelOutputDir(opts: {
+  serverName: string
+  channelName: string
+  outputDir: string
+}): string {
+  const safeServer = opts.serverName.replace(/[^\w-]/g, '_')
+  const safeChannel = opts.channelName.replace(/[^\w-]/g, '_')
+  return path.resolve(process.cwd(), opts.outputDir, safeServer, safeChannel)
+}
+
 export async function runChannelExport(opts: {
   token: string
   channelDiscordId: string

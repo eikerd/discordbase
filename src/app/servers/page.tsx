@@ -28,16 +28,41 @@ const SNOWFLAKE_RE = /^\d{17,20}$/
 // ─── Scanning overlay ─────────────────────────────────────────────────────────
 
 function ScanningOverlay({
+  channelId,
   channelName,
   serverName,
   elapsed,
 }: {
+  channelId: string
   channelName: string
   serverName: string
   elapsed: number
 }) {
   const mins = String(Math.floor(elapsed / 60)).padStart(2, '0')
   const secs = String(elapsed % 60).padStart(2, '0')
+
+  // Poll output directory size every 5 s
+  const { data: progress } = trpc.job.scanProgress.useQuery(
+    { channelId },
+    { refetchInterval: 5000 }
+  )
+
+  // Two-snapshot speed estimation — stored in a ref so it doesn't cause re-renders
+  const prevSnapshot = useRef<{ bytes: number; time: number } | null>(null)
+  const [mbPerMin, setMbPerMin] = useState<number | null>(null)
+
+  useEffect(() => {
+    const bytes = progress?.bytes ?? 0
+    const now = Date.now()
+    if (prevSnapshot.current && bytes > prevSnapshot.current.bytes) {
+      const dtMin = (now - prevSnapshot.current.time) / 60_000
+      if (dtMin > 0) setMbPerMin((bytes - prevSnapshot.current.bytes) / dtMin / 1_048_576)
+    }
+    prevSnapshot.current = { bytes, time: now }
+  }, [progress])
+
+  const totalMb = ((progress?.bytes ?? 0) / 1_048_576).toFixed(2)
+  const hasBytes = (progress?.bytes ?? 0) > 0
 
   return (
     <div
@@ -94,6 +119,23 @@ function ScanningOverlay({
             FETCHING MESSAGES...
           </span>
         </div>
+      </div>
+
+      {/* Download stats */}
+      <div className="flex items-center gap-6">
+        <div>
+          <div className="text-[9px] text-[#4a4a6a] uppercase tracking-widest mb-0.5">Downloaded</div>
+          <div className="text-[#29adff] font-bold font-mono text-sm">
+            {hasBytes ? `${totalMb} MB` : '— MB'}
+          </div>
+        </div>
+        <div>
+          <div className="text-[9px] text-[#4a4a6a] uppercase tracking-widest mb-0.5">Speed</div>
+          <div className="text-[#ffb000] font-bold font-mono text-sm">
+            {mbPerMin != null ? `${mbPerMin.toFixed(1)} MB/min` : '— MB/min'}
+          </div>
+        </div>
+        <div className="text-[9px] text-[#4a4a6a] mt-3">↻ updates every 5s</div>
       </div>
 
       {/* Warning */}
@@ -257,7 +299,7 @@ function ChannelRow({
   now: number
   anyScanning: boolean
   onChanged: () => void
-  onScanStart: (channelName: string, serverName: string) => void
+  onScanStart: (channelId: string, channelName: string, serverName: string) => void
   onScanSettled: () => void
 }) {
   const utils = trpc.useUtils()
@@ -270,7 +312,7 @@ function ChannelRow({
   })
   const scanMutation = trpc.job.triggerScrape.useMutation({
     onMutate: () => {
-      onScanStart(ch.name, server.name)
+      onScanStart(ch.id, ch.name, server.name)
     },
     onSettled: () => {
       onScanSettled()
@@ -389,7 +431,7 @@ function ServerCard({
   now: number
   anyScanning: boolean
   onChanged: () => void
-  onScanStart: (channelName: string, serverName: string) => void
+  onScanStart: (channelId: string, channelName: string, serverName: string) => void
   onScanSettled: () => void
 }) {
   const utils = trpc.useUtils()
@@ -456,7 +498,7 @@ export default function ServersPage() {
   // Elapsed timer for the scanning overlay
   const startRef = useRef<number | null>(null)
   const [elapsed, setElapsed] = useState(0)
-  const [scanningChannel, setScanningChannel] = useState<{ name: string; serverName: string } | null>(null)
+  const [scanningChannel, setScanningChannel] = useState<{ id: string; name: string; serverName: string } | null>(null)
 
   useEffect(() => {
     if (anyScanning) {
@@ -469,9 +511,9 @@ export default function ServersPage() {
     // reset is handled in onSettled of each ChannelRow mutation via the callback
   }, [anyScanning])
 
-  function handleScanStart(channelName: string, serverName: string) {
+  function handleScanStart(channelId: string, channelName: string, serverName: string) {
     setAnyScanning(true)
-    setScanningChannel({ name: channelName, serverName })
+    setScanningChannel({ id: channelId, name: channelName, serverName })
   }
 
   function handleScanSettled() {
@@ -492,6 +534,7 @@ export default function ServersPage() {
       {/* Scanning overlay — appears above everything while active */}
       {anyScanning && scanningChannel && (
         <ScanningOverlay
+          channelId={scanningChannel.id}
           channelName={scanningChannel.name}
           serverName={scanningChannel.serverName}
           elapsed={elapsed}

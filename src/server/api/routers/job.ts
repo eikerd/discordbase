@@ -1,8 +1,10 @@
 import { TRPCError } from '@trpc/server'
 import { router, publicProcedure } from '../trpc'
 import { z } from 'zod'
+import path from 'path'
+import fs from 'fs'
 import { db } from '@/lib/db'
-import { runChannelExport, ensureImage, checkDockerAvailable } from '@/lib/docker'
+import { runChannelExport, ensureImage, checkDockerAvailable, getChannelOutputDir } from '@/lib/docker'
 
 const COOLDOWN_MS = 24 * 60 * 60 * 1000 // 24 hours
 
@@ -142,6 +144,37 @@ export const jobRouter = router({
           code: 'INTERNAL_SERVER_ERROR',
           message: 'Export failed — check server logs',
         })
+      }
+    }),
+
+  // Returns total bytes written to the channel's output directory.
+  // Called every 5 s by the client during an active scan to power the progress indicator.
+  scanProgress: publicProcedure
+    .input(z.object({ channelId: z.string() }))
+    .query(async ({ input }) => {
+      const channel = await db.channel.findUnique({
+        where: { id: input.channelId },
+        include: { server: true },
+      })
+      if (!channel) return { bytes: 0 }
+
+      const config = await db.appConfig.findUnique({ where: { id: 'singleton' } })
+      const outputDir = config?.outputDir ?? './exports'
+
+      const dir = getChannelOutputDir({
+        serverName: channel.server.name,
+        channelName: channel.name,
+        outputDir,
+      })
+
+      try {
+        const files = fs.readdirSync(dir)
+        const bytes = files.reduce((sum, f) => {
+          try { return sum + fs.statSync(path.join(dir, f)).size } catch { return sum }
+        }, 0)
+        return { bytes }
+      } catch {
+        return { bytes: 0 }
       }
     }),
 
