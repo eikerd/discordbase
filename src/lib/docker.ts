@@ -166,6 +166,7 @@ export async function runChannelExport(opts: {
     '--channel', channelDiscordId,
     '--format', format,
     '--output', '/app/out/',
+    '--include-threads', 'all',
   ]
 
   // Log args with token env var redacted
