@@ -1,5 +1,6 @@
 import { router, publicProcedure } from '../trpc'
 import { db } from '@/lib/db'
+import { checkDockerAvailable } from '@/lib/docker'
 
 export const statsRouter = router({
   dashboard: publicProcedure.query(async () => {
@@ -10,12 +11,14 @@ export const statsRouter = router({
       _sum: { messageCount: true },
     })
 
+    const dockerRunning = await checkDockerAvailable()
+
     return {
       servers: serverCount,
       channels: channelCount,
       jobsRun: jobCount,
       totalMessages: totalMessages._sum.messageCount || 0,
-      dockerRunning: true,
+      dockerRunning,
     }
   }),
 })

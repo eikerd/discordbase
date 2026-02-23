@@ -1,6 +1,7 @@
 import { router, publicProcedure } from '../trpc'
 import { z } from 'zod'
 import { db } from '@/lib/db'
+import { checkDockerAvailable } from '@/lib/docker'
 
 export const configRouter = router({
   get: publicProcedure.query(async () => {
@@ -39,8 +40,8 @@ export const configRouter = router({
     }),
 
   checkDocker: publicProcedure.query(async () => {
-    // TODO: Implement Docker daemon check
-    return { running: true }
+    const running = await checkDockerAvailable()
+    return { running }
   }),
 
   pullImage: publicProcedure.mutation(async () => {
