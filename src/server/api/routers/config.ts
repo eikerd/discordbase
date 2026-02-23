@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server'
 import { router, publicProcedure } from '../trpc'
 import { z } from 'zod'
 import { db } from '@/lib/db'
@@ -25,6 +26,22 @@ export const configRouter = router({
       })
     )
     .mutation(async ({ input }) => {
+      if (input.outputDir !== undefined) {
+        const dir = input.outputDir
+        if (dir.startsWith('/') || dir.startsWith('\\')) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'outputDir must be a relative path, not an absolute path',
+          })
+        }
+        if (dir.includes('..')) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'outputDir must not contain ".." path traversal segments',
+          })
+        }
+      }
+
       return db.appConfig.upsert({
         where: { id: 'singleton' },
         update: input,

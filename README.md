@@ -5,7 +5,7 @@ Local Discord Knowledge Base Scraper — archives Discord channels via Docker on
 ## Stack
 
 - **Runtime**: Bun
-- **Framework**: Next.js 14 (App Router) + tRPC
+- **Framework**: Next.js 16 (App Router) + tRPC
 - **Database**: Prisma + SQLite
 - **Scraper**: `tyrrrz/discordchatexporter:stable` (Docker)
 - **UI**: shadcn/ui + Tailwind, 8-bit retro theme
@@ -47,7 +47,7 @@ The 24h cooldown badge in the UI (`⏸ SCAN`, amber `Xh ago`) exists to protect 
 
 ## Architecture
 
-```
+```text
 src/
   app/
     page.tsx          # Dashboard — live stats, recent jobs

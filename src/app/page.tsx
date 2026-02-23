@@ -26,8 +26,8 @@ function StatCard({
 }
 
 export default function Dashboard() {
-  const { data: stats, isLoading } = trpc.stats.dashboard.useQuery()
-  const { data: jobs } = trpc.job.recent.useQuery({ limit: 10 })
+  const { data: stats, isLoading: statsLoading, isError: statsIsError, error: statsError } = trpc.stats.dashboard.useQuery()
+  const { data: jobs, isLoading: jobsLoading, isError: jobsIsError, error: jobsError } = trpc.job.recent.useQuery({ limit: 10 })
 
   const dockerOk = stats?.dockerRunning
 
@@ -38,23 +38,33 @@ export default function Dashboard() {
         <p className="text-[#a8a8c8] text-xs mt-1">Local Discord Archive Dashboard</p>
       </div>
 
+      {/* Stats error */}
+      {statsIsError && (
+        <div
+          className="pixel-card text-xs font-mono"
+          style={{ borderColor: '#ff004d', color: '#ff004d' }}
+        >
+          ✕ Failed to load stats: {statsError?.message}
+        </div>
+      )}
+
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard
           label="SERVERS"
-          value={isLoading ? '…' : (stats?.servers ?? 0)}
+          value={statsLoading ? '…' : (stats?.servers ?? 0)}
           color="#29adff"
           sub="Connected"
         />
         <StatCard
           label="CHANNELS"
-          value={isLoading ? '…' : (stats?.channels ?? 0)}
+          value={statsLoading ? '…' : (stats?.channels ?? 0)}
           color="#29adff"
           sub="Tracked"
         />
         <StatCard
           label="JOBS RUN"
-          value={isLoading ? '…' : (stats?.jobsRun ?? 0)}
+          value={statsLoading ? '…' : (stats?.jobsRun ?? 0)}
           color="#ffb000"
           sub="Total"
         />
@@ -64,7 +74,7 @@ export default function Dashboard() {
             className="text-xl font-bold mb-1"
             style={{ color: dockerOk ? '#00ff41' : '#ff004d' }}
           >
-            {isLoading ? '…' : dockerOk ? '● ONLINE' : '● OFFLINE'}
+            {statsLoading ? '…' : dockerOk ? '● ONLINE' : '● OFFLINE'}
           </div>
           <div className="text-xs text-[#a8a8c8]">Daemon</div>
         </div>
@@ -73,7 +83,17 @@ export default function Dashboard() {
       {/* Activity Feed */}
       <div className="pixel-card">
         <h2 className="text-[#00ff41] font-bold mb-4 text-sm">RECENT JOBS</h2>
-        {!jobs || jobs.length === 0 ? (
+
+        {jobsIsError && (
+          <div
+            className="text-xs font-mono mb-2"
+            style={{ color: '#ff004d' }}
+          >
+            ✕ Failed to load jobs: {jobsError?.message}
+          </div>
+        )}
+
+        {jobsLoading ? null : (!jobs || jobs.length === 0) ? (
           <div className="text-[#a8a8c8] text-xs space-y-1">
             <div>&gt; No scrape jobs yet</div>
             <div>&gt; Add a server and channels to get started</div>

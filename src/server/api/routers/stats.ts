@@ -4,14 +4,14 @@ import { checkDockerAvailable } from '@/lib/docker'
 
 export const statsRouter = router({
   dashboard: publicProcedure.query(async () => {
-    const serverCount = await db.server.count()
-    const channelCount = await db.channel.count()
-    const jobCount = await db.scrapeJob.count()
-    const totalMessages = await db.scrapeJob.aggregate({
-      _sum: { messageCount: true },
-    })
-
-    const dockerRunning = await checkDockerAvailable()
+    const [serverCount, channelCount, jobCount, totalMessages, dockerRunning] =
+      await Promise.all([
+        db.server.count(),
+        db.channel.count(),
+        db.scrapeJob.count(),
+        db.scrapeJob.aggregate({ _sum: { messageCount: true } }),
+        checkDockerAvailable(),
+      ])
 
     return {
       servers: serverCount,

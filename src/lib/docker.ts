@@ -1,8 +1,22 @@
+import 'server-only'
 import { spawn, execFileSync } from 'child_process'
 import path from 'path'
 import fs from 'fs'
 
 const IMAGE = 'tyrrrz/discordchatexporter:stable'
+const KILL_TIMEOUT_MS = 60_000 // 60s before SIGKILL for hanging processes
+
+// Ring buffer that keeps only the last N lines
+class RingBuffer {
+  private buf: string[] = []
+  private size: number
+  constructor(size: number) { this.size = size }
+  push(line: string) {
+    if (this.buf.length >= this.size) this.buf.shift()
+    this.buf.push(line)
+  }
+  lines(): string[] { return this.buf.slice() }
+}
 
 // Resolve docker binary — Next.js spawns with a stripped PATH on macOS
 function findDocker(): string {
@@ -14,7 +28,7 @@ function findDocker(): string {
   ]
   for (const bin of candidates) {
     try {
-      execFileSync(bin, ['--version'], { stdio: 'ignore' })
+      execFileSync(bin, ['--version'], { stdio: 'ignore', timeout: 5000 })
       console.log(`[docker] Found docker at: ${bin}`)
       return bin
     } catch {
@@ -41,13 +55,19 @@ export async function checkDockerAvailable(): Promise<boolean> {
   console.log('[docker] Checking Docker daemon...')
   try {
     const bin = dockerBin()
-    return await new Promise((resolve) => {
+    return await new Promise((resolve, reject) => {
       const proc = spawn(bin, ['info'], { stdio: 'ignore' })
+      const killTimer = setTimeout(() => {
+        proc.kill('SIGKILL')
+        reject(new Error('[docker] checkDockerAvailable timed out — killing process'))
+      }, KILL_TIMEOUT_MS)
       proc.on('close', (code) => {
+        clearTimeout(killTimer)
         console.log(`[docker] daemon check exit code: ${code}`)
         resolve(code === 0)
       })
       proc.on('error', (err) => {
+        clearTimeout(killTimer)
         console.error('[docker] daemon check error:', err.message)
         resolve(false)
       })
@@ -62,10 +82,14 @@ export async function ensureImage(): Promise<void> {
   const bin = dockerBin()
   console.log(`[docker] Checking for image: ${IMAGE}`)
 
-  const present = await new Promise<boolean>((resolve) => {
+  const present = await new Promise<boolean>((resolve, reject) => {
     const check = spawn(bin, ['image', 'inspect', IMAGE], { stdio: 'ignore' })
-    check.on('close', (code) => resolve(code === 0))
-    check.on('error', () => resolve(false))
+    const killTimer = setTimeout(() => {
+      check.kill('SIGKILL')
+      reject(new Error('[docker] ensureImage inspect timed out — killing process'))
+    }, KILL_TIMEOUT_MS)
+    check.on('close', (code) => { clearTimeout(killTimer); resolve(code === 0) })
+    check.on('error', () => { clearTimeout(killTimer); resolve(false) })
   })
 
   if (present) {
@@ -76,6 +100,10 @@ export async function ensureImage(): Promise<void> {
   console.log(`[docker] Pulling ${IMAGE} ...`)
   await new Promise<void>((resolve, reject) => {
     const pull = spawn(bin, ['pull', IMAGE])
+    const killTimer = setTimeout(() => {
+      pull.kill('SIGKILL')
+      reject(new Error('[docker] ensureImage pull timed out — killing process'))
+    }, KILL_TIMEOUT_MS)
     pull.stdout.on('data', (d: Buffer) =>
       d.toString().split('\n').filter(Boolean).forEach((l) => console.log(`[docker:pull]  ${l}`))
     )
@@ -83,10 +111,11 @@ export async function ensureImage(): Promise<void> {
       d.toString().split('\n').filter(Boolean).forEach((l) => console.log(`[docker:pull]  ${l}`))
     )
     pull.on('close', (code) => {
+      clearTimeout(killTimer)
       if (code === 0) { console.log('[docker] Pull complete'); resolve() }
       else reject(new Error(`docker pull exited with code ${code}`))
     })
-    pull.on('error', reject)
+    pull.on('error', (err) => { clearTimeout(killTimer); reject(err) })
   })
 }
 
@@ -115,48 +144,57 @@ export async function runChannelExport(opts: {
 
   fs.mkdirSync(hostOutDir, { recursive: true })
 
+  // Pass token via env var — DCE supports DISCORD_TOKEN env var
   const args = [
     'run', '--rm',
     '-v', `${hostOutDir}:/app/out`,
+    '-e', `DISCORD_TOKEN=${token}`,
     IMAGE,
     'export',
-    '--token', token,
     '--channel', channelDiscordId,
     '--format', format,
     '--output', '/app/out/',
   ]
 
-  // Log args with token redacted
-  const safeArgs = args.map((a, i) => (args[i - 1] === '--token' ? '***' : a))
+  // Log args with token env var redacted
+  const safeArgs = args.map((a, i) => (args[i - 1] === '-e' ? 'DISCORD_TOKEN=***' : a))
   console.log(`[docker] CMD: ${bin} ${safeArgs.join(' ')}`)
 
   return new Promise((resolve, reject) => {
     const proc = spawn(bin, args)
-    let stdout = ''
-    let stderr = ''
+    const stdoutBuf = new RingBuffer(50)
+    const stderrBuf = new RingBuffer(50)
+
+    const killTimer = setTimeout(() => {
+      proc.kill('SIGKILL')
+      reject(new Error('[docker] runChannelExport timed out — killing process'))
+    }, KILL_TIMEOUT_MS)
 
     proc.stdout.on('data', (chunk: Buffer) => {
-      const text = chunk.toString()
-      stdout += text
-      text.split('\n').filter(Boolean).forEach((l) => console.log(`[dce]   ${l}`))
+      chunk.toString().split('\n').filter(Boolean).forEach((l) => {
+        stdoutBuf.push(l)
+        console.log(`[dce]   ${l}`)
+      })
     })
     proc.stderr.on('data', (chunk: Buffer) => {
-      const text = chunk.toString()
-      stderr += text
-      text.split('\n').filter(Boolean).forEach((l) => console.error(`[dce:err]  ${l}`))
+      chunk.toString().split('\n').filter(Boolean).forEach((l) => {
+        stderrBuf.push(l)
+        console.error(`[dce:err]  ${l}`)
+      })
     })
 
     proc.on('close', (code) => {
+      clearTimeout(killTimer)
       console.log(`[docker] Process exited with code ${code}`)
       if (code !== 0) {
-        const msg = (stderr.trim() || stdout.trim() || `docker exited ${code}`)
+        const msg = ([...stderrBuf.lines(), ...stdoutBuf.lines()].join('\n').trim() || `docker exited ${code}`)
           .split('\n').slice(0, 5).join(' | ')
         console.error(`[docker] FAILED: ${msg}`)
         reject(new Error(msg))
         return
       }
 
-      const combined = stdout + stderr
+      const combined = [...stdoutBuf.lines(), ...stderrBuf.lines()].join('\n')
       const countMatch = combined.match(/(\d[\d,]+)\s+message/i)
       const messageCount = countMatch ? parseInt(countMatch[1].replace(/,/g, ''), 10) : 0
 
@@ -166,7 +204,7 @@ export async function runChannelExport(opts: {
           .map((f) => ({ f, mtime: fs.statSync(path.join(hostOutDir, f)).mtime.getTime() }))
           .sort((a, b) => b.mtime - a.mtime)
         if (files.length > 0) outputPath = path.join(hostOutDir, files[0].f)
-      } catch (_) {}
+      } catch (err) { console.warn('[docker] Could not determine output file:', err) }
 
       console.log(`[docker] SUCCESS — ${messageCount} messages → ${outputPath}`)
       console.log(`[docker] ────────────────────────────────────────────────`)
@@ -174,6 +212,7 @@ export async function runChannelExport(opts: {
     })
 
     proc.on('error', (err) => {
+      clearTimeout(killTimer)
       console.error(`[docker] spawn error: ${err.message}`)
       reject(new Error(`Failed to spawn docker: ${err.message}`))
     })

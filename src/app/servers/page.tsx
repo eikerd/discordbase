@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { trpc } from '@/lib/trpc'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -21,7 +21,9 @@ type Server = {
   channels: Channel[]
 }
 
-type ScanMutation = ReturnType<typeof trpc.job.triggerScrape.useMutation>
+// ─── Snowflake validation ─────────────────────────────────────────────────────
+
+const SNOWFLAKE_RE = /^\d{17,20}$/
 
 // ─── Scanning overlay ─────────────────────────────────────────────────────────
 
@@ -114,6 +116,9 @@ function AddServerForm({ onAdded }: { onAdded: () => void }) {
     onSuccess: () => { setName(''); setDiscordId(''); setOpen(false); onAdded() },
   })
 
+  const idValid = SNOWFLAKE_RE.test(discordId)
+  const idInvalid = discordId.length > 0 && !idValid
+
   if (!open) {
     return (
       <button className="pixel-button text-xs" onClick={() => setOpen(true)}>
@@ -142,6 +147,9 @@ function AddServerForm({ onAdded }: { onAdded: () => void }) {
           value={discordId}
           onChange={(e) => setDiscordId(e.target.value)}
         />
+        {idInvalid && (
+          <p className="text-[9px] text-[#ff004d]">Invalid Discord ID format</p>
+        )}
         <p className="text-[9px] text-[#4a4a6a]">
           Right-click server icon in Discord → Copy Server ID (enable Developer Mode first)
         </p>
@@ -149,7 +157,7 @@ function AddServerForm({ onAdded }: { onAdded: () => void }) {
       <div className="flex gap-2">
         <button
           className="pixel-button text-xs"
-          disabled={!name || !discordId || add.isPending}
+          disabled={!name || !idValid || add.isPending}
           onClick={() => add.mutate({ name, discordId })}
         >
           {add.isPending ? 'SAVING…' : 'SAVE'}
@@ -177,6 +185,9 @@ function AddChannelForm({ serverId, onAdded }: { serverId: string; onAdded: () =
   const add = trpc.channel.add.useMutation({
     onSuccess: () => { setName(''); setDiscordId(''); setOpen(false); onAdded() },
   })
+
+  const idValid = SNOWFLAKE_RE.test(discordId)
+  const idInvalid = discordId.length > 0 && !idValid
 
   if (!open) {
     return (
@@ -209,7 +220,7 @@ function AddChannelForm({ serverId, onAdded }: { serverId: string; onAdded: () =
         <button
           className="pixel-button text-[9px]"
           style={{ padding: '4px 8px' }}
-          disabled={!name || !discordId || add.isPending}
+          disabled={!name || !idValid || add.isPending}
           onClick={() => add.mutate({ serverId, name, discordId })}
         >
           {add.isPending ? '…' : 'ADD'}
@@ -222,7 +233,144 @@ function AddChannelForm({ serverId, onAdded }: { serverId: string; onAdded: () =
           ✕
         </button>
       </div>
+      {idInvalid && (
+        <p className="text-[9px] text-[#ff004d]">Invalid Discord ID format</p>
+      )}
       {add.error && <div className="text-[#ff004d] text-[9px]">{add.error.message}</div>}
+    </div>
+  )
+}
+
+// ─── Channel row ──────────────────────────────────────────────────────────────
+
+function ChannelRow({
+  ch,
+  server,
+  now,
+  anyScanning,
+  onChanged,
+  onScanStart,
+  onScanSettled,
+}: {
+  ch: Channel
+  server: Server
+  now: number
+  anyScanning: boolean
+  onChanged: () => void
+  onScanStart: (channelName: string, serverName: string) => void
+  onScanSettled: () => void
+}) {
+  const utils = trpc.useUtils()
+
+  const removeChannel = trpc.channel.remove.useMutation({
+    onSuccess: () => utils.server.list.invalidate(),
+  })
+  const toggleChannel = trpc.channel.toggleEnabled.useMutation({
+    onSuccess: () => utils.server.list.invalidate(),
+  })
+  const scanMutation = trpc.job.triggerScrape.useMutation({
+    onMutate: () => {
+      onScanStart(ch.name, server.name)
+    },
+    onSettled: () => {
+      onScanSettled()
+      onChanged()
+    },
+  })
+
+  const lastScrapedMs = ch.lastScraped ? new Date(ch.lastScraped).getTime() : null
+  const hoursSince = lastScrapedMs ? (now - lastScrapedMs) / 3_600_000 : null
+  const ageBadge = hoursSince == null ? null
+    : hoursSince < 1 ? `${Math.round(hoursSince * 60)}m ago`
+    : hoursSince < 24 ? `${Math.round(hoursSince)}h ago`
+    : `${Math.floor(hoursSince / 24)}d ago`
+  const onCooldown = hoursSince != null && hoursSince < 24
+
+  const isScanning = scanMutation.isPending
+  const scanFailed = scanMutation.isError
+  const scanBlocked = isScanning || onCooldown || anyScanning
+
+  return (
+    <div className="space-y-0.5">
+      <div
+        className="flex items-center gap-2 px-2 py-1.5"
+        style={{
+          background: isScanning ? '#0a1a0a' : '#0f0f23',
+          border: `1px solid ${isScanning ? '#00ff41' : '#2a2a4a'}`,
+          transition: 'all 0.2s',
+        }}
+      >
+        {/* ON/OFF */}
+        <button
+          className="text-[9px] font-bold px-1.5 py-0.5 border"
+          style={{
+            color: ch.enabled ? '#00ff41' : '#4a4a6a',
+            borderColor: ch.enabled ? '#00ff41' : '#4a4a6a',
+            background: 'transparent',
+          }}
+          onClick={() => toggleChannel.mutate({ id: ch.id })}
+          title="Toggle scheduled scraping"
+        >
+          {ch.enabled ? 'ON' : 'OFF'}
+        </button>
+
+        {/* SCAN */}
+        <button
+          className="text-[9px] font-bold px-1.5 py-0.5 border"
+          style={{
+            color: isScanning ? '#ffb000' : onCooldown ? '#4a4a6a' : anyScanning ? '#4a4a6a' : '#29adff',
+            borderColor: isScanning ? '#ffb000' : onCooldown ? '#4a4a6a' : anyScanning ? '#4a4a6a' : '#29adff',
+            background: 'transparent',
+            minWidth: '52px',
+            cursor: scanBlocked ? 'not-allowed' : 'pointer',
+            opacity: (onCooldown || (anyScanning && !isScanning)) ? 0.4 : 1,
+          }}
+          onClick={() => !scanBlocked && scanMutation.mutate({ channelId: ch.id })}
+          disabled={scanBlocked}
+          title={
+            isScanning ? 'Scanning...' :
+            onCooldown ? `24h cooldown — scanned ${ageBadge}` :
+            anyScanning ? 'Another scan in progress' :
+            'Run scrape now'
+          }
+        >
+          {isScanning ? '⟳ SCAN' : onCooldown ? '⏸ SCAN' : '▶ SCAN'}
+        </button>
+
+        <span className="text-xs text-[#e8e8e8] flex-1">#{ch.name}</span>
+        <span className="text-[9px] text-[#4a4a6a] font-mono">{ch.discordId}</span>
+
+        {ageBadge && (
+          <span
+            className="text-[9px] px-1.5 py-0.5"
+            style={{
+              color: onCooldown ? '#ffb000' : hoursSince! > 168 ? '#ff004d' : '#a8a8c8',
+              border: '1px solid',
+              borderColor: onCooldown ? '#ffb000' : hoursSince! > 168 ? '#ff004d' : '#2a2a4a',
+            }}
+            title={`Last scraped: ${new Date(ch.lastScraped!).toLocaleString()}`}
+          >
+            {ageBadge}
+          </span>
+        )}
+
+        <button
+          className="text-[#ff004d] text-[9px] px-1"
+          onClick={() => removeChannel.mutate({ id: ch.id })}
+          title="Remove channel"
+        >
+          ✕
+        </button>
+      </div>
+
+      {scanFailed && (
+        <div
+          className="text-[9px] px-2 py-1 font-mono"
+          style={{ background: '#2a0a0a', color: '#ff004d', border: '1px solid #ff004d' }}
+        >
+          ✕ {scanMutation.error?.message}
+        </div>
+      )}
     </div>
   )
 }
@@ -231,22 +379,21 @@ function AddChannelForm({ serverId, onAdded }: { serverId: string; onAdded: () =
 
 function ServerCard({
   server,
-  scanMutation,
+  now,
+  anyScanning,
   onChanged,
+  onScanStart,
+  onScanSettled,
 }: {
   server: Server
-  scanMutation: ScanMutation
+  now: number
+  anyScanning: boolean
   onChanged: () => void
+  onScanStart: (channelName: string, serverName: string) => void
+  onScanSettled: () => void
 }) {
   const utils = trpc.useUtils()
-
   const removeServer = trpc.server.remove.useMutation({ onSuccess: onChanged })
-  const removeChannel = trpc.channel.remove.useMutation({
-    onSuccess: () => utils.server.list.invalidate(),
-  })
-  const toggleChannel = trpc.channel.toggleEnabled.useMutation({
-    onSuccess: () => utils.server.list.invalidate(),
-  })
 
   return (
     <div className="pixel-card space-y-3">
@@ -275,104 +422,18 @@ function ServerCard({
           <div className="text-[#4a4a6a] text-xs">No channels yet</div>
         )}
 
-        {server.channels.map((ch) => {
-          const isScanning = scanMutation.isPending && scanMutation.variables?.channelId === ch.id
-          const scanFailed = scanMutation.isError && scanMutation.variables?.channelId === ch.id
-          const anyScanning = scanMutation.isPending
-
-          const lastScrapedMs = ch.lastScraped ? new Date(ch.lastScraped).getTime() : null
-          const hoursSince = lastScrapedMs ? (Date.now() - lastScrapedMs) / 3_600_000 : null
-          const ageBadge = hoursSince == null ? null
-            : hoursSince < 1 ? `${Math.round(hoursSince * 60)}m ago`
-            : hoursSince < 24 ? `${Math.round(hoursSince)}h ago`
-            : `${Math.floor(hoursSince / 24)}d ago`
-          const onCooldown = hoursSince != null && hoursSince < 24
-          const scanBlocked = isScanning || onCooldown || anyScanning
-
-          return (
-            <div key={ch.id} className="space-y-0.5">
-              <div
-                className="flex items-center gap-2 px-2 py-1.5"
-                style={{
-                  background: isScanning ? '#0a1a0a' : '#0f0f23',
-                  border: `1px solid ${isScanning ? '#00ff41' : '#2a2a4a'}`,
-                  transition: 'all 0.2s',
-                }}
-              >
-                {/* ON/OFF */}
-                <button
-                  className="text-[9px] font-bold px-1.5 py-0.5 border"
-                  style={{
-                    color: ch.enabled ? '#00ff41' : '#4a4a6a',
-                    borderColor: ch.enabled ? '#00ff41' : '#4a4a6a',
-                    background: 'transparent',
-                  }}
-                  onClick={() => toggleChannel.mutate({ id: ch.id })}
-                  title="Toggle scheduled scraping"
-                >
-                  {ch.enabled ? 'ON' : 'OFF'}
-                </button>
-
-                {/* SCAN */}
-                <button
-                  className="text-[9px] font-bold px-1.5 py-0.5 border"
-                  style={{
-                    color: isScanning ? '#ffb000' : onCooldown ? '#4a4a6a' : anyScanning ? '#4a4a6a' : '#29adff',
-                    borderColor: isScanning ? '#ffb000' : onCooldown ? '#4a4a6a' : anyScanning ? '#4a4a6a' : '#29adff',
-                    background: 'transparent',
-                    minWidth: '52px',
-                    cursor: scanBlocked ? 'not-allowed' : 'pointer',
-                    opacity: (onCooldown || (anyScanning && !isScanning)) ? 0.4 : 1,
-                  }}
-                  onClick={() => !scanBlocked && scanMutation.mutate({ channelId: ch.id })}
-                  disabled={scanBlocked}
-                  title={
-                    isScanning ? 'Scanning...' :
-                    onCooldown ? `24h cooldown — scanned ${ageBadge}` :
-                    anyScanning ? 'Another scan in progress' :
-                    'Run scrape now'
-                  }
-                >
-                  {isScanning ? '⟳ SCAN' : onCooldown ? '⏸ SCAN' : '▶ SCAN'}
-                </button>
-
-                <span className="text-xs text-[#e8e8e8] flex-1">#{ch.name}</span>
-                <span className="text-[9px] text-[#4a4a6a] font-mono">{ch.discordId}</span>
-
-                {ageBadge && (
-                  <span
-                    className="text-[9px] px-1.5 py-0.5"
-                    style={{
-                      color: onCooldown ? '#ffb000' : hoursSince! > 168 ? '#ff004d' : '#a8a8c8',
-                      border: '1px solid',
-                      borderColor: onCooldown ? '#ffb000' : hoursSince! > 168 ? '#ff004d' : '#2a2a4a',
-                    }}
-                    title={`Last scraped: ${new Date(ch.lastScraped!).toLocaleString()}`}
-                  >
-                    {ageBadge}
-                  </span>
-                )}
-
-                <button
-                  className="text-[#ff004d] text-[9px] px-1"
-                  onClick={() => removeChannel.mutate({ id: ch.id })}
-                  title="Remove channel"
-                >
-                  ✕
-                </button>
-              </div>
-
-              {scanFailed && (
-                <div
-                  className="text-[9px] px-2 py-1 font-mono"
-                  style={{ background: '#2a0a0a', color: '#ff004d', border: '1px solid #ff004d' }}
-                >
-                  ✕ {scanMutation.error?.message}
-                </div>
-              )}
-            </div>
-          )
-        })}
+        {server.channels.map((ch) => (
+          <ChannelRow
+            key={ch.id}
+            ch={ch}
+            server={server}
+            now={now}
+            anyScanning={anyScanning}
+            onChanged={onChanged}
+            onScanStart={onScanStart}
+            onScanSettled={onScanSettled}
+          />
+        ))}
 
         <AddChannelForm serverId={server.id} onAdded={() => utils.server.list.invalidate()} />
       </div>
@@ -386,37 +447,39 @@ export default function ServersPage() {
   const utils = trpc.useUtils()
   const { data: servers, isLoading } = trpc.server.list.useQuery()
 
-  // Scan mutation lives here so the overlay can read it
-  const scanMutation = trpc.job.triggerScrape.useMutation({
-    onSuccess: () => utils.server.list.invalidate(),
-  })
+  // Stable `now` value — initialized once, avoids non-deterministic re-renders
+  const now = useMemo(() => Date.now(), [])
 
-  // Elapsed timer
+  // Track whether any scan is in progress across all ChannelRow instances
+  const [anyScanning, setAnyScanning] = useState(false)
+
+  // Elapsed timer for the scanning overlay
   const startRef = useRef<number | null>(null)
   const [elapsed, setElapsed] = useState(0)
+  const [scanningChannel, setScanningChannel] = useState<{ name: string; serverName: string } | null>(null)
 
   useEffect(() => {
-    if (scanMutation.isPending) {
+    if (anyScanning) {
       if (!startRef.current) startRef.current = Date.now()
       const id = setInterval(() => {
         setElapsed(Math.floor((Date.now() - startRef.current!) / 1000))
       }, 1000)
       return () => clearInterval(id)
-    } else {
-      startRef.current = null
-      setElapsed(0)
     }
-  }, [scanMutation.isPending])
+    // reset is handled in onSettled of each ChannelRow mutation via the callback
+  }, [anyScanning])
 
-  // Resolve channel/server name for the overlay
-  const scanningChannelId = scanMutation.variables?.channelId
-  let scanningChannelName = ''
-  let scanningServerName = ''
-  if (scanningChannelId && servers) {
-    for (const s of servers) {
-      const ch = s.channels.find((c) => c.id === scanningChannelId)
-      if (ch) { scanningChannelName = ch.name; scanningServerName = s.name; break }
-    }
+  function handleScanStart(channelName: string, serverName: string) {
+    setAnyScanning(true)
+    setScanningChannel({ name: channelName, serverName })
+  }
+
+  function handleScanSettled() {
+    setAnyScanning(false)
+    setScanningChannel(null)
+    setElapsed(0)
+    startRef.current = null
+    utils.server.list.invalidate()
   }
 
   return (
@@ -427,10 +490,10 @@ export default function ServersPage() {
       </div>
 
       {/* Scanning overlay — appears above everything while active */}
-      {scanMutation.isPending && (
+      {anyScanning && scanningChannel && (
         <ScanningOverlay
-          channelName={scanningChannelName}
-          serverName={scanningServerName}
+          channelName={scanningChannel.name}
+          serverName={scanningChannel.serverName}
           elapsed={elapsed}
         />
       )}
@@ -453,8 +516,11 @@ export default function ServersPage() {
           <ServerCard
             key={server.id}
             server={server}
-            scanMutation={scanMutation}
+            now={now}
+            anyScanning={anyScanning}
             onChanged={() => utils.server.list.invalidate()}
+            onScanStart={handleScanStart}
+            onScanSettled={handleScanSettled}
           />
         ))}
       </div>

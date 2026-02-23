@@ -4,6 +4,8 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { runChannelExport, ensureImage, checkDockerAvailable } from '@/lib/docker'
 
+const COOLDOWN_MS = 24 * 60 * 60 * 1000 // 24 hours
+
 export const jobRouter = router({
   recent: publicProcedure
     .input(z.object({ limit: z.number().default(20) }))
@@ -49,6 +51,30 @@ export const jobRouter = router({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Channel not found' })
       }
       console.log(`[job] Channel: #${channel.name} (discordId=${channel.discordId}) in server "${channel.server.name}"`)
+
+      // 24h cooldown check
+      if (channel.lastScraped) {
+        const elapsed = Date.now() - channel.lastScraped.getTime()
+        if (elapsed < COOLDOWN_MS) {
+          console.warn(`[job] Channel ${input.channelId} scraped ${Math.round(elapsed / 60000)}min ago — cooldown active`)
+          throw new TRPCError({
+            code: 'PRECONDITION_FAILED',
+            message: 'Channel was scraped less than 24 hours ago',
+          })
+        }
+      }
+
+      // Concurrent scrape guard
+      const running = await db.scrapeJob.findFirst({
+        where: { channelId: input.channelId, status: 'running' },
+      })
+      if (running) {
+        console.warn(`[job] Channel ${input.channelId} already has a running job id=${running.id}`)
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: 'A scrape job is already running for this channel',
+        })
+      }
 
       // Load config / token
       const config = await db.appConfig.findUnique({ where: { id: 'singleton' } })
@@ -105,12 +131,17 @@ export const jobRouter = router({
         const errorMsg = err instanceof Error ? err.message : String(err)
         console.error(`[job] Job ${job.id} FAILED: ${errorMsg}`)
 
+        // Persist full error in job record for debugging
         await db.scrapeJob.update({
           where: { id: job.id },
           data: { status: 'failed', finishedAt: new Date(), errorLog: errorMsg },
         })
 
-        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: errorMsg })
+        // Return generic message to client — full details are in server logs and job.errorLog
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Export failed — check server logs',
+        })
       }
     }),
 
@@ -121,6 +152,9 @@ export const jobRouter = router({
         where: { serverId: input.serverId },
       })
       console.log(`[job] triggerServer: queueing ${channels.length} channels for serverId=${input.serverId}`)
+      // TODO: Jobs are created with status 'pending' so the scheduler can pick them up
+      // in a future sprint. The scheduler (node-cron) will poll for pending jobs and
+      // execute them sequentially — one docker run at a time.
       return Promise.all(
         channels.map((ch) =>
           db.scrapeJob.create({
