@@ -1,7 +1,109 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { trpc } from '@/lib/trpc'
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+type Channel = {
+  id: string
+  name: string
+  discordId: string
+  enabled: boolean
+  scrapeEvery: number
+  lastScraped: string | null
+}
+
+type Server = {
+  id: string
+  name: string
+  discordId: string
+  channels: Channel[]
+}
+
+type ScanMutation = ReturnType<typeof trpc.job.triggerScrape.useMutation>
+
+// ─── Scanning overlay ─────────────────────────────────────────────────────────
+
+function ScanningOverlay({
+  channelName,
+  serverName,
+  elapsed,
+}: {
+  channelName: string
+  serverName: string
+  elapsed: number
+}) {
+  const mins = String(Math.floor(elapsed / 60)).padStart(2, '0')
+  const secs = String(elapsed % 60).padStart(2, '0')
+
+  return (
+    <div
+      className="pixel-card space-y-3"
+      style={{
+        borderColor: '#00ff41',
+        animation: 'scan-pulse 1.5s ease-in-out infinite',
+      }}
+    >
+      {/* Header row */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span
+            className="text-[#00ff41] font-bold text-xs"
+            style={{ animation: 'pixel-blink 1s step-end infinite' }}
+          >
+            ⟳
+          </span>
+          <span className="text-[#00ff41] font-bold text-sm tracking-widest">
+            SCANNING IN PROGRESS
+          </span>
+        </div>
+        <span className="text-[#00ff41] font-bold font-mono text-lg tracking-widest">
+          {mins}:{secs}
+        </span>
+      </div>
+
+      {/* Channel info */}
+      <div className="text-xs text-[#e8e8e8]">
+        <span className="text-[#a8a8c8]">{serverName}</span>
+        <span className="text-[#4a4a6a]"> / </span>
+        <span className="text-[#00ff41] font-bold">#{channelName}</span>
+      </div>
+
+      {/* Animated progress bar */}
+      <div
+        className="relative overflow-hidden h-4"
+        style={{ background: '#0a0a1a', border: '2px solid #2a2a4a' }}
+      >
+        {/* Track fill */}
+        <div className="absolute inset-0" style={{ background: '#0d2a0d' }} />
+        {/* Scan beam */}
+        <div
+          className="absolute top-0 bottom-0 w-1/3"
+          style={{
+            background:
+              'linear-gradient(90deg, transparent, rgba(0,255,65,0.6), rgba(0,255,65,1), rgba(0,255,65,0.6), transparent)',
+            animation: 'scan-beam 1.4s linear infinite',
+          }}
+        />
+        {/* Timer overlay text */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-[9px] font-bold text-[#00ff41] tracking-widest" style={{ mixBlendMode: 'screen' }}>
+            FETCHING MESSAGES...
+          </span>
+        </div>
+      </div>
+
+      {/* Warning */}
+      <div className="text-[9px] text-[#ffb000] font-mono">
+        ⚠ Do not close this window — Docker is running in the background.
+        Large channels can take several minutes.
+      </div>
+    </div>
+  )
+}
+
+// ─── Add Server form ──────────────────────────────────────────────────────────
 
 function AddServerForm({ onAdded }: { onAdded: () => void }) {
   const [name, setName] = useState('')
@@ -9,12 +111,7 @@ function AddServerForm({ onAdded }: { onAdded: () => void }) {
   const [open, setOpen] = useState(false)
 
   const add = trpc.server.add.useMutation({
-    onSuccess: () => {
-      setName('')
-      setDiscordId('')
-      setOpen(false)
-      onAdded()
-    },
+    onSuccess: () => { setName(''); setDiscordId(''); setOpen(false); onAdded() },
   })
 
   if (!open) {
@@ -65,43 +162,27 @@ function AddServerForm({ onAdded }: { onAdded: () => void }) {
           CANCEL
         </button>
       </div>
-      {add.error && (
-        <div className="text-[#ff004d] text-xs">{add.error.message}</div>
-      )}
+      {add.error && <div className="text-[#ff004d] text-xs">{add.error.message}</div>}
     </div>
   )
 }
 
-function AddChannelForm({
-  serverId,
-  onAdded,
-}: {
-  serverId: string
-  onAdded: () => void
-}) {
+// ─── Add Channel form ─────────────────────────────────────────────────────────
+
+function AddChannelForm({ serverId, onAdded }: { serverId: string; onAdded: () => void }) {
   const [name, setName] = useState('')
   const [discordId, setDiscordId] = useState('')
   const [open, setOpen] = useState(false)
 
   const add = trpc.channel.add.useMutation({
-    onSuccess: () => {
-      setName('')
-      setDiscordId('')
-      setOpen(false)
-      onAdded()
-    },
+    onSuccess: () => { setName(''); setDiscordId(''); setOpen(false); onAdded() },
   })
 
   if (!open) {
     return (
       <button
         className="pixel-button text-[9px]"
-        style={{
-          background: '#1a2a3a',
-          borderColor: '#29adff',
-          color: '#29adff',
-          padding: '4px 8px',
-        }}
+        style={{ background: '#1a2a3a', borderColor: '#29adff', color: '#29adff', padding: '4px 8px' }}
         onClick={() => setOpen(true)}
       >
         + CHANNEL
@@ -146,46 +227,29 @@ function AddChannelForm({
   )
 }
 
-function ServerCard({ server, onChanged }: {
-  server: {
-    id: string
-    name: string
-    discordId: string
-    channels: {
-      id: string
-      name: string
-      discordId: string
-      enabled: boolean
-      scrapeEvery: number
-      lastScraped: string | null
-    }[]
-  }
+// ─── Server card ──────────────────────────────────────────────────────────────
+
+function ServerCard({
+  server,
+  scanMutation,
+  onChanged,
+}: {
+  server: Server
+  scanMutation: ScanMutation
   onChanged: () => void
 }) {
   const utils = trpc.useUtils()
 
-  const removeServer = trpc.server.remove.useMutation({
-    onSuccess: () => onChanged(),
-  })
+  const removeServer = trpc.server.remove.useMutation({ onSuccess: onChanged })
   const removeChannel = trpc.channel.remove.useMutation({
-    onSuccess: () => {
-      utils.server.list.invalidate()
-    },
+    onSuccess: () => utils.server.list.invalidate(),
   })
   const toggleChannel = trpc.channel.toggleEnabled.useMutation({
-    onSuccess: () => {
-      utils.server.list.invalidate()
-    },
-  })
-  const scanChannel = trpc.job.triggerScrape.useMutation({
-    onSuccess: () => {
-      utils.server.list.invalidate()
-    },
+    onSuccess: () => utils.server.list.invalidate(),
   })
 
   return (
     <div className="pixel-card space-y-3">
-      {/* Server header */}
       <div className="flex items-center justify-between">
         <div>
           <div className="text-[#00ff41] font-bold text-sm">{server.name}</div>
@@ -193,23 +257,16 @@ function ServerCard({ server, onChanged }: {
         </div>
         <button
           className="pixel-button text-[9px]"
-          style={{
-            background: '#2a0a0a',
-            borderColor: '#ff004d',
-            color: '#ff004d',
-            padding: '4px 8px',
-          }}
+          style={{ background: '#2a0a0a', borderColor: '#ff004d', color: '#ff004d', padding: '4px 8px' }}
           onClick={() => {
-            if (confirm(`Delete server "${server.name}" and all its channels?`)) {
+            if (confirm(`Delete server "${server.name}" and all its channels?`))
               removeServer.mutate({ id: server.id })
-            }
           }}
         >
           DELETE
         </button>
       </div>
 
-      {/* Channels */}
       <div className="space-y-1">
         <div className="text-[#a8a8c8] text-[9px] font-bold mb-2">
           CHANNELS ({server.channels.length})
@@ -217,30 +274,32 @@ function ServerCard({ server, onChanged }: {
         {server.channels.length === 0 && (
           <div className="text-[#4a4a6a] text-xs">No channels yet</div>
         )}
-        {server.channels.map((ch) => {
-          const isScanning =
-            scanChannel.isPending && scanChannel.variables?.channelId === ch.id
-          const scanFailed =
-            scanChannel.isError && scanChannel.variables?.channelId === ch.id
 
-          // Staleness + 24h cooldown
+        {server.channels.map((ch) => {
+          const isScanning = scanMutation.isPending && scanMutation.variables?.channelId === ch.id
+          const scanFailed = scanMutation.isError && scanMutation.variables?.channelId === ch.id
+          const anyScanning = scanMutation.isPending
+
           const lastScrapedMs = ch.lastScraped ? new Date(ch.lastScraped).getTime() : null
-          const msSinceScraped = lastScrapedMs ? Date.now() - lastScrapedMs : null
-          const hoursSince = msSinceScraped != null ? msSinceScraped / (1000 * 60 * 60) : null
-          const daysSince = hoursSince != null ? Math.floor(hoursSince) < 24
-            ? `${Math.round(hoursSince)}h ago`
+          const hoursSince = lastScrapedMs ? (Date.now() - lastScrapedMs) / 3_600_000 : null
+          const ageBadge = hoursSince == null ? null
+            : hoursSince < 1 ? `${Math.round(hoursSince * 60)}m ago`
+            : hoursSince < 24 ? `${Math.round(hoursSince)}h ago`
             : `${Math.floor(hoursSince / 24)}d ago`
-            : null
           const onCooldown = hoursSince != null && hoursSince < 24
-          const scanBlocked = isScanning || onCooldown
+          const scanBlocked = isScanning || onCooldown || anyScanning
 
           return (
             <div key={ch.id} className="space-y-0.5">
               <div
                 className="flex items-center gap-2 px-2 py-1.5"
-                style={{ background: '#0f0f23', border: '1px solid #2a2a4a' }}
+                style={{
+                  background: isScanning ? '#0a1a0a' : '#0f0f23',
+                  border: `1px solid ${isScanning ? '#00ff41' : '#2a2a4a'}`,
+                  transition: 'all 0.2s',
+                }}
               >
-                {/* ON/OFF toggle */}
+                {/* ON/OFF */}
                 <button
                   className="text-[9px] font-bold px-1.5 py-0.5 border"
                   style={{
@@ -254,22 +313,23 @@ function ServerCard({ server, onChanged }: {
                   {ch.enabled ? 'ON' : 'OFF'}
                 </button>
 
-                {/* SCAN button */}
+                {/* SCAN */}
                 <button
                   className="text-[9px] font-bold px-1.5 py-0.5 border"
                   style={{
-                    color: isScanning ? '#ffb000' : onCooldown ? '#4a4a6a' : '#29adff',
-                    borderColor: isScanning ? '#ffb000' : onCooldown ? '#4a4a6a' : '#29adff',
+                    color: isScanning ? '#ffb000' : onCooldown ? '#4a4a6a' : anyScanning ? '#4a4a6a' : '#29adff',
+                    borderColor: isScanning ? '#ffb000' : onCooldown ? '#4a4a6a' : anyScanning ? '#4a4a6a' : '#29adff',
                     background: 'transparent',
                     minWidth: '52px',
                     cursor: scanBlocked ? 'not-allowed' : 'pointer',
-                    opacity: onCooldown ? 0.5 : 1,
+                    opacity: (onCooldown || (anyScanning && !isScanning)) ? 0.4 : 1,
                   }}
-                  onClick={() => !scanBlocked && scanChannel.mutate({ channelId: ch.id })}
+                  onClick={() => !scanBlocked && scanMutation.mutate({ channelId: ch.id })}
                   disabled={scanBlocked}
                   title={
                     isScanning ? 'Scanning...' :
-                    onCooldown ? `24h cooldown — scanned ${daysSince}` :
+                    onCooldown ? `24h cooldown — scanned ${ageBadge}` :
+                    anyScanning ? 'Another scan in progress' :
                     'Run scrape now'
                   }
                 >
@@ -279,8 +339,7 @@ function ServerCard({ server, onChanged }: {
                 <span className="text-xs text-[#e8e8e8] flex-1">#{ch.name}</span>
                 <span className="text-[9px] text-[#4a4a6a] font-mono">{ch.discordId}</span>
 
-                {/* Staleness badge */}
-                {daysSince && (
+                {ageBadge && (
                   <span
                     className="text-[9px] px-1.5 py-0.5"
                     style={{
@@ -290,9 +349,10 @@ function ServerCard({ server, onChanged }: {
                     }}
                     title={`Last scraped: ${new Date(ch.lastScraped!).toLocaleString()}`}
                   >
-                    {daysSince}
+                    {ageBadge}
                   </span>
                 )}
+
                 <button
                   className="text-[#ff004d] text-[9px] px-1"
                   onClick={() => removeChannel.mutate({ id: ch.id })}
@@ -302,27 +362,62 @@ function ServerCard({ server, onChanged }: {
                 </button>
               </div>
 
-              {/* Scan error */}
               {scanFailed && (
                 <div
                   className="text-[9px] px-2 py-1 font-mono"
                   style={{ background: '#2a0a0a', color: '#ff004d', border: '1px solid #ff004d' }}
                 >
-                  ✕ {scanChannel.error?.message}
+                  ✕ {scanMutation.error?.message}
                 </div>
               )}
             </div>
           )
         })}
+
         <AddChannelForm serverId={server.id} onAdded={() => utils.server.list.invalidate()} />
       </div>
     </div>
   )
 }
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function ServersPage() {
   const utils = trpc.useUtils()
   const { data: servers, isLoading } = trpc.server.list.useQuery()
+
+  // Scan mutation lives here so the overlay can read it
+  const scanMutation = trpc.job.triggerScrape.useMutation({
+    onSuccess: () => utils.server.list.invalidate(),
+  })
+
+  // Elapsed timer
+  const startRef = useRef<number | null>(null)
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    if (scanMutation.isPending) {
+      if (!startRef.current) startRef.current = Date.now()
+      const id = setInterval(() => {
+        setElapsed(Math.floor((Date.now() - startRef.current!) / 1000))
+      }, 1000)
+      return () => clearInterval(id)
+    } else {
+      startRef.current = null
+      setElapsed(0)
+    }
+  }, [scanMutation.isPending])
+
+  // Resolve channel/server name for the overlay
+  const scanningChannelId = scanMutation.variables?.channelId
+  let scanningChannelName = ''
+  let scanningServerName = ''
+  if (scanningChannelId && servers) {
+    for (const s of servers) {
+      const ch = s.channels.find((c) => c.id === scanningChannelId)
+      if (ch) { scanningChannelName = ch.name; scanningServerName = s.name; break }
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -330,6 +425,15 @@ export default function ServersPage() {
         <h1 className="text-[#00ff41] text-2xl font-bold tracking-widest">SERVERS</h1>
         <p className="text-[#a8a8c8] text-xs mt-1">Manage Discord servers and channels to archive</p>
       </div>
+
+      {/* Scanning overlay — appears above everything while active */}
+      {scanMutation.isPending && (
+        <ScanningOverlay
+          channelName={scanningChannelName}
+          serverName={scanningServerName}
+          elapsed={elapsed}
+        />
+      )}
 
       <AddServerForm onAdded={() => utils.server.list.invalidate()} />
 
@@ -349,6 +453,7 @@ export default function ServersPage() {
           <ServerCard
             key={server.id}
             server={server}
+            scanMutation={scanMutation}
             onChanged={() => utils.server.list.invalidate()}
           />
         ))}
