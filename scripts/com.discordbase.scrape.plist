@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.discordbase.scrape</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/ernestoikerd/.bun/bin/bun</string>
+        <string>run</string>
+        <string>scripts/scrape-next.ts</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/ernestoikerd/repos/localai/discordbase</string>
+
+    <!-- Every two hours. One channel per firing, and the script itself refuses
+         to touch a channel that is inside its 24h cooldown. -->
+    <key>StartInterval</key>
+    <integer>7200</integer>
+
+    <!-- Do not fire the moment it is loaded; wait for the first interval. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/ernestoikerd/.bun/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ernestoikerd/repos/localai/discordbase/logs/scheduler.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/ernestoikerd/repos/localai/discordbase/logs/scheduler.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

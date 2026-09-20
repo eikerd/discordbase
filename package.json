@@ -10,7 +10,11 @@
     "test": "playwright test",
     "test:ui": "playwright test --ui",
     "test:debug": "playwright test --debug",
-    "test:report": "playwright show-report"
+    "test:report": "playwright show-report",
+    "ingest": "bun run scripts/ingest.ts",
+    "scrape:next": "bun run scripts/scrape-next.ts",
+    "db:push": "bun run scripts/fts-setup.ts --drop && prisma db push --accept-data-loss && bun run scripts/fts-setup.ts",
+    "fts:rebuild": "bun run scripts/fts-setup.ts"
   },
   "dependencies": {
     "@prisma/client": "5.21.1",
@@ -33,6 +37,7 @@
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4",
+    "@types/bun": "^1.4.2",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

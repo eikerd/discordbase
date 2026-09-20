@@ -19,6 +19,47 @@ export const jobRouter = router({
       })
     }),
 
+  /** Full sync history for the SYNC LOG tab, newest first. */
+  log: publicProcedure
+    .input(
+      z.object({
+        limit: z.number().min(1).max(200).default(50),
+        offset: z.number().min(0).default(0),
+        status: z.enum(['all', 'done', 'failed', 'running', 'partial']).default('all'),
+      }),
+    )
+    .query(async ({ input }) => {
+      const where = input.status === 'all' ? {} : { status: input.status }
+
+      const [jobs, total, agg] = await Promise.all([
+        db.scrapeJob.findMany({
+          where,
+          take: input.limit,
+          skip: input.offset,
+          orderBy: { createdAt: 'desc' },
+          include: { channel: { include: { server: true } } },
+        }),
+        db.scrapeJob.count({ where }),
+        db.scrapeJob.aggregate({
+          where: { status: 'done' },
+          _sum: { messageCount: true, exportBytes: true, ingestedCount: true, promptCount: true },
+          _count: true,
+        }),
+      ])
+
+      return {
+        jobs,
+        total,
+        summary: {
+          completed: agg._count,
+          messages: agg._sum.messageCount ?? 0,
+          ingested: agg._sum.ingestedCount ?? 0,
+          prompts: agg._sum.promptCount ?? 0,
+          bytes: agg._sum.exportBytes ?? 0,
+        },
+      }
+    }),
+
   byChannel: publicProcedure
     .input(z.object({ channelId: z.string() }))
     .query(async ({ input }) => {
