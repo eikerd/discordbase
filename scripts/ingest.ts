@@ -21,7 +21,7 @@ import { readdir, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { detectVersions, versionFromChannelName } from '../src/lib/wan-version'
 import { detectPrompt } from '../src/lib/prompt-detect'
-import { FTS_DDL } from '../src/lib/fts'
+import { FTS_DDL, FTS_REBUILD } from '../src/lib/fts'
 
 const DB_PATH = resolve(process.cwd(), 'prisma/prisma/dev.db')
 const BATCH = 2_000
@@ -165,6 +165,19 @@ export async function ingestPath(targetPath = 'exports', quiet = false): Promise
   db.run('PRAGMA journal_mode = WAL')
   db.run('PRAGMA synchronous = NORMAL')
   for (const ddl of FTS_DDL) db.run(ddl)
+
+  // The triggers only index rows this run touches. If message_fts was dropped
+  // externally (a raw `prisma db push`), every older Message would be missing
+  // from search until someone happened to open /search and its own check
+  // rebuilt it — and on the launchd path nobody does. Check it here too.
+  {
+    const total = db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM Message').get()?.n ?? 0
+    const indexed = db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM message_fts').get()?.n ?? 0
+    if (total !== indexed) {
+      console.warn(`[ingest] search index out of sync (${indexed}/${total}) — rebuilding`)
+      db.run(FTS_REBUILD)
+    }
+  }
 
   const findServer = db.query<{ id: string }, [string]>('SELECT id FROM Server WHERE discordId = ?')
   const findChannel = db.query<{ id: string }, [string]>('SELECT id FROM Channel WHERE discordId = ?')

@@ -41,9 +41,34 @@ function cuid(): string {
   return 'c' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36)
 }
 
+/** Past this, a job still marked running is wreckage from a crashed process:
+ *  docker-core caps an export at 12h, so nothing legitimate reaches 13. */
+const STALE_JOB_MS = 13 * 60 * 60_000
+
 async function main() {
   const db = new Database(DB_PATH)
   db.run('PRAGMA journal_mode = WAL')
+
+  // A job that died without reaching its catch — OOM, kill -9, a crash outside
+  // the try — leaves status='running' forever. Without this the guard below
+  // then skips every tick from here on and the scheduled sync stops for good,
+  // silently, because the skip exits 0 so launchd sees nothing wrong.
+  // An export cannot legitimately outlive docker-core's own 12h ceiling, so
+  // anything older than that plus an hour's grace is wreckage, not work.
+  const staleBefore = new Date(Date.now() - STALE_JOB_MS).toISOString()
+  const reclaimed = db.run(
+    `UPDATE ScrapeJob
+        SET status = 'failed',
+            finishedAt = CURRENT_TIMESTAMP,
+            errorLog = COALESCE(errorLog, '') ||
+              'Reclaimed by the scheduler: still marked running after ' ||
+              ? || 'h with no process to finish it.'
+      WHERE status = 'running' AND COALESCE(startedAt, createdAt) < ?`,
+    [String(STALE_JOB_MS / 3_600_000), staleBefore],
+  )
+  if (reclaimed.changes > 0) {
+    log(`reclaimed ${reclaimed.changes} stale running job(s) — a previous run died without finishing`)
+  }
 
   // Another run still in flight? Bail rather than stack Docker containers.
   const running = db

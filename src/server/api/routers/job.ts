@@ -6,6 +6,9 @@ import fs from 'fs'
 import { db } from '@/lib/db'
 import { runChannelExport, ensureImage, checkDockerAvailable, getChannelOutputDir } from '@/lib/docker'
 
+/** Past this, a job still marked running is wreckage from a crashed process:
+ *  docker-core caps an export at 12h, so nothing legitimate reaches 13. */
+const STALE_JOB_MS = 13 * 60 * 60_000
 const COOLDOWN_MS = 24 * 60 * 60 * 1000 // 24 hours
 
 export const jobRouter = router({
@@ -105,6 +108,27 @@ export const jobRouter = router({
             message: 'Channel was scraped less than 24 hours ago',
           })
         }
+      }
+
+      // A job whose process died without reaching its catch stays 'running'
+      // forever, and the guard below would then refuse this channel for good.
+      // docker-core caps an export at 12h, so past 13 it is wreckage: mark it
+      // failed and let the scan proceed.
+      const staleCutoff = new Date(Date.now() - STALE_JOB_MS)
+      const reclaimed = await db.scrapeJob.updateMany({
+        where: {
+          channelId: input.channelId,
+          status: 'running',
+          OR: [{ startedAt: { lt: staleCutoff } }, { startedAt: null, createdAt: { lt: staleCutoff } }],
+        },
+        data: {
+          status: 'failed',
+          finishedAt: new Date(),
+          errorLog: 'Reclaimed: still marked running with no process to finish it.',
+        },
+      })
+      if (reclaimed.count > 0) {
+        console.warn(`[job] Reclaimed ${reclaimed.count} stale running job(s) for channel ${input.channelId}`)
       }
 
       // Concurrent scrape guard

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
+import { keepPreviousData } from '@tanstack/react-query'
 import { trpc } from '@/lib/trpc'
 
 // ─── Theme tokens ────────────────────────────────────────────────────────────
@@ -108,6 +109,16 @@ function Toggle({ on, onClick, children }: { on: boolean; onClick: () => void; c
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
+function parseAttachments(raw: string | null): Attachment[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? (parsed as Attachment[]) : []
+  } catch {
+    return []
+  }
+}
+
 export default function SearchPage() {
   const [rawQ, setRawQ] = useState('')
   const [q, setQ] = useState('')
@@ -152,6 +163,10 @@ export default function SearchPage() {
     sort,
     limit: LIMIT,
     offset: page * LIMIT,
+  }, {
+    // Without this, React Query 5 blanks `data` on every refetch, so the list
+    // vanishes and "no results" flashes between keystrokes of a debounced search.
+    placeholderData: keepPreviousData,
   })
 
   const channels = useMemo(() => {
@@ -264,7 +279,9 @@ export default function SearchPage() {
       {/* Results */}
       <div className="space-y-2">
         {data?.hits.map((h) => {
-          const atts: Attachment[] = h.attachments ? JSON.parse(h.attachments) : []
+          // Only ingest writes this column, but one hand-edited or truncated row
+          // should not take the whole results list down with it.
+          const atts: Attachment[] = parseAttachments(h.attachments)
           const jump = `https://discord.com/channels/${h.serverDiscordId}/${h.channelDiscordId}/${h.discordId}`
           return (
             <article key={h.seq} className="p-3" style={{ background: C.panel, border: `2px solid ${C.border}` }}>

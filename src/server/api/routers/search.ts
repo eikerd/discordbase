@@ -12,14 +12,20 @@ import { KNOWN_VERSIONS, VERSION_SOURCES } from '@/lib/wan-version'
  * identical either way, so they are built once.
  */
 
-let ftsReady = false
+let ftsReadyUntil = 0
+/** How long a successful check is trusted before it is made again. Long enough
+ *  that a busy search page does not re-count on every keystroke, short enough
+ *  that a table dropped underneath a running server heals on its own — the old
+ *  once-per-process flag never re-checked, so it did not. */
+const FTS_RECHECK_MS = 60_000
+
 /**
  * `prisma db push` drops message_fts every time it runs, and CREATE IF NOT
  * EXISTS would then leave an empty index that silently returns no results. So
  * compare the row counts and rebuild when they disagree.
  */
 async function ensureFts() {
-  if (ftsReady) return
+  if (Date.now() < ftsReadyUntil) return
   for (const ddl of FTS_DDL) await db.$executeRawUnsafe(ddl)
 
   const [{ n: messages }] = await db.$queryRawUnsafe<{ n: bigint }[]>('SELECT COUNT(*) AS n FROM Message')
@@ -29,11 +35,11 @@ async function ensureFts() {
     await db.$executeRawUnsafe(FTS_REBUILD)
   }
 
-  ftsReady = true
+  ftsReadyUntil = Date.now() + FTS_RECHECK_MS
 }
 
 const searchInput = z.object({
-  q: z.string().default(''),
+  q: z.string().max(500).default(''),
   serverId: z.string().optional(),
   channelId: z.string().optional(),
   author: z.string().optional(),
@@ -60,7 +66,12 @@ function buildFilters(input: SearchInput) {
 
   if (input.serverId) { where.push('s.id = ?'); params.push(input.serverId) }
   if (input.channelId) { where.push('c.id = ?'); params.push(input.channelId) }
-  if (input.author) { where.push('m.authorName LIKE ?'); params.push(`%${input.author}%`) }
+  // Results display authorNick || authorName, so a search for the name someone
+  // can actually see has to match either one.
+  if (input.author) {
+    where.push('(m.authorName LIKE ? OR m.authorNick LIKE ?)')
+    params.push(`%${input.author}%`, `%${input.author}%`)
+  }
 
   if (input.version === 'none') {
     where.push('m.wanVersion IS NULL')
@@ -132,7 +143,13 @@ export interface SearchHit {
 export const searchRouter = router({
   /** Dropdown data for the filter bar. */
   filters: publicProcedure.query(async () => {
-    await ensureFts()
+    // The filter bar is the page's scaffolding; if the index is unavailable the
+    // dropdowns should still populate rather than failing the whole page.
+    try {
+      await ensureFts()
+    } catch (err) {
+      console.error('[search] filters: could not prepare the index —', err)
+    }
 
     const servers = await db.server.findMany({
       orderBy: { name: 'asc' },

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { keepPreviousData } from '@tanstack/react-query'
 import { trpc } from '@/lib/trpc'
 
 const C = {
@@ -84,7 +85,9 @@ export default function JobsPage() {
   // A scrape can be in flight, so keep it live.
   const { data } = trpc.job.log.useQuery(
     { status, limit: LIMIT, offset: page * LIMIT },
-    { refetchInterval: 10_000 },
+    // keepPreviousData so the 10s poll and the status filter swap rows in place
+    // instead of emptying the table on every refetch.
+    { refetchInterval: 10_000, placeholderData: keepPreviousData },
   )
 
   const totalPages = data ? Math.ceil(data.total / LIMIT) : 0
