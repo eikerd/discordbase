@@ -254,11 +254,11 @@
     "url": "https://github.com/eikerd/discordbase/pull/3",
     "branch": "feat/search-and-sync-log",
     "date": "2026-09-20",
-    "verdict": "READY"
+    "verdict": "MERGED"
   },
   "score": {
-    "found": 9,
-    "fixed": 8,
+    "found": 12,
+    "fixed": 11,
     "rebutted": 1,
     "grade": "C+"
   },
@@ -365,6 +365,56 @@
           "confidence": 100,
           "status": "fixed",
           "wouldHaveMissed": true
+        }
+      ]
+    },
+    {
+      "label": "Round 4 — CodeRabbit",
+      "findings": [
+        {
+          "reviewer": "coderabbit",
+          "severity": "L",
+          "title": "My own reclaim fix would have killed live exports",
+          "detail": "Prisma stores DateTime as INTEGER milliseconds in SQLite, and SQLite sorts every integer before any text. My stale-job reclaim bound an ISO string, so the comparison was true for every row: the first scheduler tick would have marked a job that started a minute ago as stale and killed the export it was running — the exact failure the fix existed to prevent, made worse.",
+          "claudeResponse": "Fixed to bind milliseconds. Verified against the real database with two planted jobs: one running for two minutes survives, one stuck for twenty hours is reclaimed, and the tick then correctly defers to the live one.",
+          "confidence": 100,
+          "status": "fixed",
+          "wouldHaveMissed": true
+        },
+        {
+          "reviewer": "coderabbit",
+          "severity": "M",
+          "title": "A non-JSON export format would have ingested nothing, silently",
+          "detail": "The scheduled run passed Settings' exportFormat to DCE and then unconditionally ingested the result, but findExports only accepts .json. Choosing HTML or CSV in Settings would have exported successfully and stored nothing, with no error.",
+          "claudeResponse": "The ingesting path is now always JSON; the manual SCAN still honours the Settings format.",
+          "confidence": 90,
+          "status": "fixed",
+          "wouldHaveMissed": true
+        },
+        {
+          "reviewer": "coderabbit",
+          "severity": "M",
+          "title": "The launchd plist hardcoded one machine's paths",
+          "detail": "scheduler.md said to copy the plist straight into ~/Library/LaunchAgents, but it carried this developer's home directory. On any other checkout that registers a job whose WorkingDirectory and bun path do not exist, and launchd reports nothing.",
+          "claudeResponse": "Now a template plus scripts/install-scheduler.sh, which substitutes the real paths, boots out a previously loaded copy and prints what it installed. The generated plist passes plutil -lint with no placeholders left.",
+          "confidence": 95,
+          "status": "fixed",
+          "wouldHaveMissed": true
+        }
+      ]
+    },
+    {
+      "label": "Round 5 — recovering what I broke",
+      "findings": [
+        {
+          "reviewer": "claude",
+          "severity": "L",
+          "title": "I destroyed the local database, then rebuilt it from the exports",
+          "detail": "Rebuilding the branch to drop the committed blob reset the tracked prisma/prisma/dev.db to main's empty 45 KB copy, overwriting the live 2.5 MB database — 5,106 messages, 46 jobs, the configured token. The dev server kept serving the old file through its open handle, so nothing looked wrong at the time.",
+          "claudeResponse": "Restored the snapshot from the very blob the security fix removed, then re-ingested all 207 export files (513 MB), which are the source of truth the database is derived from. It now holds 241,268 messages with the FTS index in sync and the token intact — more than before, because the previous database only ever held partially ingested channels. The lesson: copy a live artefact aside before any branch operation that can touch it, which is what I did on the second switch and should have done on the first.",
+          "confidence": 100,
+          "status": "fixed",
+          "wouldHaveMissed": false
         }
       ]
     }
