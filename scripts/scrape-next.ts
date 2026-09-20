@@ -55,7 +55,11 @@ async function main() {
   // silently, because the skip exits 0 so launchd sees nothing wrong.
   // An export cannot legitimately outlive docker-core's own 12h ceiling, so
   // anything older than that plus an hour's grace is wreckage, not work.
-  const staleBefore = new Date(Date.now() - STALE_JOB_MS).toISOString()
+  // Prisma stores DateTime as INTEGER milliseconds in SQLite, and SQLite sorts
+  // every integer before any text. Binding an ISO string here would make the
+  // comparison below true for every row and reclaim a job that started a minute
+  // ago, killing a live export on the first tick.
+  const staleBefore = Date.now() - STALE_JOB_MS
   const reclaimed = db.run(
     `UPDATE ScrapeJob
         SET status = 'failed',
