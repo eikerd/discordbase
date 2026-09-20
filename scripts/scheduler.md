@@ -7,8 +7,7 @@ result as a `ScrapeJob`, visible in the SYNC LOG tab.
 ## Install the launchd agent
 
 ```bash
-cp scripts/com.discordbase.scrape.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.discordbase.scrape.plist
+./scripts/install-scheduler.sh
 ```
 
 ## Control it
@@ -21,7 +20,7 @@ tail -f logs/scheduler.log
 ```
 
 Change the cadence by editing `StartInterval` (seconds), then `bootout` and
-`bootstrap` again — launchd caches the plist at load time.
+`./scripts/install-scheduler.sh` again — it boots the old job out first, because launchd caches the plist at load time.
 
 ## Why it is safe to leave running
 

@@ -142,7 +142,11 @@ async function main() {
       channelDiscordId: channel.discordId,
       serverName: channel.serverName,
       channelName: channel.name,
-      format: config.exportFormat,
+      // The scheduled run ingests what it exports, and the ingester only reads
+      // .json. Honouring a Settings choice of HTML or CSV here would export
+      // fine and then silently ingest nothing, so this path is always JSON;
+      // the manual SCAN still exports whatever format Settings asks for.
+      format: 'Json',
       outputDir: config.outputDir,
       after: channel.lastMessageId,
     })
