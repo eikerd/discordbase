@@ -101,3 +101,18 @@
   border: 2px solid #2a2a4a;
   box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.5);
 }
+
+@keyframes scan-beam {
+  0%   { left: -40%; }
+  100% { left: 110%; }
+}
+
+@keyframes pixel-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+@keyframes scan-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(0,255,65,0.4), 4px 4px 0 rgba(0,0,0,0.5); }
+  50%       { box-shadow: 0 0 20px rgba(0,255,65,0.8), 4px 4px 0 rgba(0,0,0,0.5); }
+}

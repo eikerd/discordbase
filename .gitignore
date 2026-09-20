@@ -44,3 +44,11 @@ next-env.d.ts
 test-results/
 playwright-report/
 blob-report/
+.playwright-mcp/
+
+# Discord exports (local data, not source)
+/exports/
+
+# SQLite DB (local state)
+prisma/prisma/dev.db
+prisma/dev.db
