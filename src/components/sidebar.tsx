@@ -27,7 +27,12 @@ export function Sidebar() {
       {/* Nav */}
       <nav className="flex-1 p-2 space-y-1">
         {navItems.map((item) => {
-          const active = pathname === item.href
+          // Exact match only for the root, or every page would light it up.
+          // Everything else matches its subtree, so /servers/123 keeps SERVERS lit.
+          const active =
+            item.href === '/'
+              ? pathname === '/'
+              : pathname === item.href || pathname.startsWith(`${item.href}/`)
           return (
             <Link
               key={item.href}

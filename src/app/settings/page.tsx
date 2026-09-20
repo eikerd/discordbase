@@ -124,7 +124,7 @@ export default function SettingsPage() {
             onChange={(e) => setForm((f) => ({ ...f, outputDir: e.target.value }))}
           />
           <p className="text-[9px] text-[#4a4a6a] mt-1">
-            Relative to the app root or absolute path
+            Relative to the app root (absolute paths are rejected)
           </p>
         </div>
       </div>
