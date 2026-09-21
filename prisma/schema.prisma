@@ -27,9 +27,54 @@ model Channel {
   enabled     Boolean     @default(true)
   scrapeEvery Int         @default(7)
   lastScraped DateTime?
+  /// Newest Discord message id ingested. Passed to DCE as --after so later
+  /// syncs pull only what arrived since, instead of re-exporting the channel.
+  lastMessageId String?
   jobs        ScrapeJob[]
+  messages    Message[]
 }
 
+/// One archived Discord message, ingested from a DCE JSON export.
+/// `seq` is an INTEGER PRIMARY KEY so it aliases SQLite's rowid, which is what
+/// the external-content FTS5 index (`message_fts`) joins against.
+model Message {
+  seq         Int      @id @default(autoincrement())
+  discordId   String   @unique
+  channelId   String
+  channel     Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  authorId    String
+  authorName  String
+  authorNick  String?
+  isBot       Boolean  @default(false)
+  content     String
+  timestamp   DateTime
+  attachments String?
+  attachCount Int      @default(0)
+  hasImage    Boolean  @default(false)
+  hasVideo    Boolean  @default(false)
+  ingestedAt  DateTime @default(now())
+
+  /// Best-guess Wan version, e.g. "2.7" / "3.0". Null when undetectable.
+  wanVersion     String?
+  /// How wanVersion was decided: model_id | explicit | contextual | channel.
+  wanVersionSrc  String?
+  /// JSON array of every version mentioned, most-mentioned first.
+  wanVersions    String?
+  /// t2v | i2v | ti2v | s2v | flf2v | animate | vace
+  wanTask        String?
+  isPrompt       Boolean @default(false)
+  promptScore    Int     @default(0)
+  promptText     String?
+  negativePrompt String?
+
+  @@index([channelId, timestamp])
+  @@index([authorName])
+  @@index([timestamp])
+  @@index([wanVersion])
+  @@index([isPrompt, wanVersion])
+}
+
+/// One sync event: an export run, and what the ingest made of it.
 model ScrapeJob {
   id           String    @id @default(cuid())
   channelId    String
@@ -41,6 +86,18 @@ model ScrapeJob {
   outputPath   String?
   errorLog     String?
   createdAt    DateTime  @default(now())
+
+  /// manual (SCAN button) | scheduled (launchd) | backfill
+  trigger       String  @default("manual")
+  /// Bytes written by DiscordChatExporter.
+  exportBytes   Int?
+  /// Rows the ingest wrote, and how many of them scored as prompts.
+  ingestedCount Int?
+  promptCount   Int?
+  /// Which stage a failure happened in: export | ingest.
+  failedStage   String?
+
+  @@index([createdAt])
 }
 
 model AppConfig {

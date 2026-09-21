@@ -4,6 +4,7 @@ import { serverRouter } from './server'
 import { channelRouter } from './channel'
 import { jobRouter } from './job'
 import { statsRouter } from './stats'
+import { searchRouter } from './search'
 
 export const appRouter = router({
   config: configRouter,
@@ -11,6 +12,7 @@ export const appRouter = router({
   channel: channelRouter,
   job: jobRouter,
   stats: statsRouter,
+  search: searchRouter,
 })
 
 export type AppRouter = typeof appRouter

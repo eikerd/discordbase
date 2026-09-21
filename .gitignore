@@ -52,3 +52,12 @@ blob-report/
 # SQLite DB (local state)
 prisma/prisma/dev.db
 prisma/dev.db
+
+# SQLite sidecar files and local scratch
+prisma/prisma/dev.db-shm
+prisma/prisma/dev.db-wal
+scan-overlay.png
+package-lock.json
+
+# Local runtime state: never commit the database or its logs.
+logs/

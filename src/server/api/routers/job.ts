@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server'
+import { Prisma } from '@prisma/client'
 import { router, publicProcedure } from '../trpc'
 import { z } from 'zod'
 import path from 'path'
@@ -6,6 +7,9 @@ import fs from 'fs'
 import { db } from '@/lib/db'
 import { runChannelExport, ensureImage, checkDockerAvailable, getChannelOutputDir } from '@/lib/docker'
 
+/** Past this, a job still marked running is wreckage from a crashed process:
+ *  docker-core caps an export at 12h, so nothing legitimate reaches 13. */
+const STALE_JOB_MS = 13 * 60 * 60_000
 const COOLDOWN_MS = 24 * 60 * 60 * 1000 // 24 hours
 
 export const jobRouter = router({
@@ -17,6 +21,47 @@ export const jobRouter = router({
         orderBy: { createdAt: 'desc' },
         include: { channel: { include: { server: true } } },
       })
+    }),
+
+  /** Full sync history for the SYNC LOG tab, newest first. */
+  log: publicProcedure
+    .input(
+      z.object({
+        limit: z.number().min(1).max(200).default(50),
+        offset: z.number().min(0).default(0),
+        status: z.enum(['all', 'done', 'failed', 'running', 'partial']).default('all'),
+      }),
+    )
+    .query(async ({ input }) => {
+      const where = input.status === 'all' ? {} : { status: input.status }
+
+      const [jobs, total, agg] = await Promise.all([
+        db.scrapeJob.findMany({
+          where,
+          take: input.limit,
+          skip: input.offset,
+          orderBy: { createdAt: 'desc' },
+          include: { channel: { include: { server: true } } },
+        }),
+        db.scrapeJob.count({ where }),
+        db.scrapeJob.aggregate({
+          where: { status: 'done' },
+          _sum: { messageCount: true, exportBytes: true, ingestedCount: true, promptCount: true },
+          _count: true,
+        }),
+      ])
+
+      return {
+        jobs,
+        total,
+        summary: {
+          completed: agg._count,
+          messages: agg._sum.messageCount ?? 0,
+          ingested: agg._sum.ingestedCount ?? 0,
+          prompts: agg._sum.promptCount ?? 0,
+          bytes: agg._sum.exportBytes ?? 0,
+        },
+      }
     }),
 
   byChannel: publicProcedure
@@ -66,15 +111,39 @@ export const jobRouter = router({
         }
       }
 
-      // Concurrent scrape guard
-      const running = await db.scrapeJob.findFirst({
-        where: { channelId: input.channelId, status: 'running' },
+      // A job whose process died without reaching its catch stays 'running'
+      // forever, and the guard below would then refuse this channel for good.
+      // docker-core caps an export at 12h, so past 13 it is wreckage: mark it
+      // failed and let the scan proceed.
+      const staleCutoff = new Date(Date.now() - STALE_JOB_MS)
+      const reclaimed = await db.scrapeJob.updateMany({
+        where: {
+          status: 'running',
+          OR: [{ startedAt: { lt: staleCutoff } }, { startedAt: null, createdAt: { lt: staleCutoff } }],
+        },
+        data: {
+          status: 'failed',
+          finishedAt: new Date(),
+          errorLog: 'Reclaimed: still marked running with no process to finish it.',
+        },
       })
+      if (reclaimed.count > 0) {
+        console.warn(`[job] Reclaimed ${reclaimed.count} stale running job(s) for channel ${input.channelId}`)
+      }
+
+      // One scan at a time, across the whole app: the scheduler holds this same
+      // guard globally, and scoping the manual button to its own channel let a
+      // SCAN on channel B start a second Docker export while a scheduled export
+      // of channel A was still running, against one Discord account.
+      const running = await db.scrapeJob.findFirst({ where: { status: 'running' } })
       if (running) {
-        console.warn(`[job] Channel ${input.channelId} already has a running job id=${running.id}`)
+        const sameChannel = running.channelId === input.channelId
+        console.warn(`[job] A job is already running id=${running.id} (channel ${running.channelId})`)
         throw new TRPCError({
           code: 'CONFLICT',
-          message: 'A scrape job is already running for this channel',
+          message: sameChannel
+            ? 'A scrape job is already running for this channel'
+            : 'Another channel is being scraped right now — one at a time.',
         })
       }
 
@@ -89,10 +158,25 @@ export const jobRouter = router({
       }
       console.log(`[job] Config loaded — format=${config.exportFormat} outputDir=${config.outputDir}`)
 
-      // Create job record
-      const job = await db.scrapeJob.create({
-        data: { channelId: input.channelId, status: 'running', startedAt: new Date() },
-      })
+      // The findFirst above is a read: two requests can both pass it before
+      // either inserts. The partial unique index on status='running' is what
+      // actually enforces one-at-a-time, so the loser of that race fails here
+      // and gets the same CONFLICT rather than starting a second export.
+      let job
+      try {
+        job = await db.scrapeJob.create({
+          data: { channelId: input.channelId, status: 'running', startedAt: new Date() },
+        })
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          console.warn('[job] Lost the race for the running-job slot')
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'Another scrape just started — one at a time.',
+          })
+        }
+        throw err
+      }
       console.log(`[job] Created job record id=${job.id} status=running`)
 
       try {
