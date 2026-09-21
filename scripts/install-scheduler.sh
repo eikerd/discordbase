@@ -12,17 +12,36 @@ template="$repo/scripts/com.discordbase.scrape.plist.template"
 target="$HOME/Library/LaunchAgents/com.discordbase.scrape.plist"
 label="com.discordbase.scrape"
 
-bun="$(command -v bun || true)"
+# Resolve the override first: the whole point of BUN is to work when bun is not
+# on PATH, so testing PATH before honouring it defeated the documented escape.
+bun="${BUN:-$(command -v bun || true)}"
 if [ -z "$bun" ]; then
   echo "bun is not on PATH. Install it, or set BUN=/path/to/bun and re-run." >&2
   exit 1
 fi
+if [ ! -x "$bun" ]; then
+  echo "Not executable: $bun" >&2
+  exit 1
+fi
 
 mkdir -p "$HOME/Library/LaunchAgents" "$repo/logs"
-sed -e "s|__BUN__|${BUN:-$bun}|g" \
-    -e "s|__WORKDIR__|$repo|g" \
-    -e "s|__HOME__|$HOME|g" \
-    "$template" > "$target"
+# A path may contain the sed delimiter, and an "&" is special in both sed and
+# awk REPLACEMENT text (it means "the matched string"), so neither gsub nor sed
+# can be handed a raw path. Replace literally with index/substr instead.
+BUN_PATH="$bun" WORKDIR="$repo" HOMEDIR="$HOME" awk '
+  function lit(s, needle, rep,   out, i) {
+    out = ""
+    while ((i = index(s, needle)) > 0) {
+      out = out substr(s, 1, i - 1) rep
+      s = substr(s, i + length(needle))
+    }
+    return out s
+  }
+  { line = lit($0, "__BUN__", ENVIRON["BUN_PATH"])
+    line = lit(line, "__WORKDIR__", ENVIRON["WORKDIR"])
+    line = lit(line, "__HOME__", ENVIRON["HOMEDIR"])
+    print line }
+' "$template" > "$target"
 
 # bootout first: launchd caches the plist at load, so a re-install of an
 # already-loaded label would otherwise keep running the old one.
@@ -30,7 +49,7 @@ launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$target"
 
 echo "Installed $label"
-echo "  bun:     ${BUN:-$bun}"
+echo "  bun:     $bun"
 echo "  workdir: $repo"
 echo "  log:     $repo/logs/scheduler.log"
 echo "Check it with: launchctl print gui/$(id -u)/$label | head"

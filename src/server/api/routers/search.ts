@@ -184,7 +184,15 @@ export const searchRouter = router({
     await ensureFts()
 
     const filters = buildFilters(input)
-    const fts = input.q.trim() ? toFtsQuery(input.q) : null
+    const typed = input.q.trim()
+    const fts = typed ? toFtsQuery(input.q) : null
+
+    // Something was typed but nothing survived normalisation — "((((", say.
+    // Falling through to the unfiltered path would answer with the entire
+    // archive, which reads as though the search box were ignored.
+    if (typed && !fts) {
+      return { hits: [], total: 0, facets: [], ftsQuery: null, error: null as string | null }
+    }
 
     // Relevance only means something with a text query.
     const sort = input.sort === 'relevance' && !fts ? 'newest' : input.sort

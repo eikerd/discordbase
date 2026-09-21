@@ -117,7 +117,6 @@ export const jobRouter = router({
       const staleCutoff = new Date(Date.now() - STALE_JOB_MS)
       const reclaimed = await db.scrapeJob.updateMany({
         where: {
-          channelId: input.channelId,
           status: 'running',
           OR: [{ startedAt: { lt: staleCutoff } }, { startedAt: null, createdAt: { lt: staleCutoff } }],
         },
@@ -131,15 +130,19 @@ export const jobRouter = router({
         console.warn(`[job] Reclaimed ${reclaimed.count} stale running job(s) for channel ${input.channelId}`)
       }
 
-      // Concurrent scrape guard
-      const running = await db.scrapeJob.findFirst({
-        where: { channelId: input.channelId, status: 'running' },
-      })
+      // One scan at a time, across the whole app: the scheduler holds this same
+      // guard globally, and scoping the manual button to its own channel let a
+      // SCAN on channel B start a second Docker export while a scheduled export
+      // of channel A was still running, against one Discord account.
+      const running = await db.scrapeJob.findFirst({ where: { status: 'running' } })
       if (running) {
-        console.warn(`[job] Channel ${input.channelId} already has a running job id=${running.id}`)
+        const sameChannel = running.channelId === input.channelId
+        console.warn(`[job] A job is already running id=${running.id} (channel ${running.channelId})`)
         throw new TRPCError({
           code: 'CONFLICT',
-          message: 'A scrape job is already running for this channel',
+          message: sameChannel
+            ? 'A scrape job is already running for this channel'
+            : 'Another channel is being scraped right now — one at a time.',
         })
       }
 
