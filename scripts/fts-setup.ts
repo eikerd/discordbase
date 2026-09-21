@@ -10,7 +10,7 @@
 
 import { Database } from 'bun:sqlite'
 import { resolve } from 'node:path'
-import { FTS_DDL, FTS_DROP, FTS_REBUILD } from '../src/lib/fts'
+import { FTS_DDL, FTS_DROP, FTS_REBUILD, ONE_RUNNING_JOB_DDL } from '../src/lib/fts'
 
 const db = new Database(resolve(process.cwd(), 'prisma/prisma/dev.db'))
 db.run('PRAGMA journal_mode = WAL')
@@ -25,6 +25,7 @@ if (process.argv.includes('--drop')) {
 }
 
 for (const ddl of FTS_DDL) db.run(ddl)
+db.run(ONE_RUNNING_JOB_DDL)
 db.run(FTS_REBUILD)
 
 const messages = db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM Message').get()!.n

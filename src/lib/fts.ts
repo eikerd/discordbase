@@ -102,3 +102,13 @@ export function toFtsQuery(raw: string): string | null {
 
   return out.length ? out.join(' ') : null
 }
+
+/** At most one ScrapeJob may be 'running' at a time, enforced by the database
+ *  rather than by a read-then-write in application code: two SCAN requests can
+ *  both pass a findFirst check before either inserts. A partial unique index
+ *  makes the second insert fail instead, which the caller turns into a CONFLICT.
+ *  Lives here because `prisma db push` drops anything it does not manage, and
+ *  this is the module the setup script already re-applies afterwards. */
+export const ONE_RUNNING_JOB_DDL =
+  `CREATE UNIQUE INDEX IF NOT EXISTS scrapejob_one_running
+     ON ScrapeJob (status) WHERE status = 'running'`

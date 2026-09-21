@@ -171,10 +171,12 @@ export async function ingestPath(targetPath = 'exports', quiet = false): Promise
   // from search until someone happened to open /search and its own check
   // rebuilt it — and on the launchd path nobody does. Check it here too.
   {
+    // message_fts is external-content, so COUNT(*) on it reads through to
+    // Message and cannot see an empty index. Ask the shadow table instead.
     const total = db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM Message').get()?.n ?? 0
-    const indexed = db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM message_fts').get()?.n ?? 0
-    if (total !== indexed) {
-      console.warn(`[ingest] search index out of sync (${indexed}/${total}) — rebuilding`)
+    const indexRows = db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM message_fts_data').get()?.n ?? 0
+    if (total > 0 && indexRows < 3) {
+      console.warn(`[ingest] the search index is empty (${total} messages) — rebuilding`)
       db.run(FTS_REBUILD)
     }
   }

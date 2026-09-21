@@ -1,7 +1,7 @@
 import { router, publicProcedure } from '../trpc'
 import { z } from 'zod'
 import { db } from '@/lib/db'
-import { FTS_DDL, FTS_REBUILD, toFtsQuery } from '@/lib/fts'
+import { FTS_DDL, FTS_REBUILD, toFtsQuery, ONE_RUNNING_JOB_DDL } from '@/lib/fts'
 import { KNOWN_VERSIONS, VERSION_SOURCES } from '@/lib/wan-version'
 
 /**
@@ -27,11 +27,20 @@ const FTS_RECHECK_MS = 60_000
 async function ensureFts() {
   if (Date.now() < ftsReadyUntil) return
   for (const ddl of FTS_DDL) await db.$executeRawUnsafe(ddl)
+  await db.$executeRawUnsafe(ONE_RUNNING_JOB_DDL)
 
   const [{ n: messages }] = await db.$queryRawUnsafe<{ n: bigint }[]>('SELECT COUNT(*) AS n FROM Message')
-  const [{ n: indexed }] = await db.$queryRawUnsafe<{ n: bigint }[]>('SELECT COUNT(*) AS n FROM message_fts')
-  if (messages !== indexed) {
-    console.warn(`[search] index out of sync (${indexed}/${messages}) — rebuilding`)
+  // NOT `COUNT(*) FROM message_fts`: this is an external-content table, so that
+  // reads straight through to Message and reports the full count even when the
+  // inverted index is empty — it can never detect the failure it was guarding
+  // against. ('integrity-check' passes on an emptied index too.) The shadow
+  // table is the index itself: a healthy one here has thousands of rows, an
+  // emptied one has two.
+  const [{ n: indexRows }] = await db.$queryRawUnsafe<{ n: bigint }[]>(
+    'SELECT COUNT(*) AS n FROM message_fts_data',
+  )
+  if (Number(messages) > 0 && Number(indexRows) < 3) {
+    console.warn(`[search] the search index is empty (${messages} messages) — rebuilding`)
     await db.$executeRawUnsafe(FTS_REBUILD)
   }
 

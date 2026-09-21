@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server'
+import { Prisma } from '@prisma/client'
 import { router, publicProcedure } from '../trpc'
 import { z } from 'zod'
 import path from 'path'
@@ -157,10 +158,25 @@ export const jobRouter = router({
       }
       console.log(`[job] Config loaded — format=${config.exportFormat} outputDir=${config.outputDir}`)
 
-      // Create job record
-      const job = await db.scrapeJob.create({
-        data: { channelId: input.channelId, status: 'running', startedAt: new Date() },
-      })
+      // The findFirst above is a read: two requests can both pass it before
+      // either inserts. The partial unique index on status='running' is what
+      // actually enforces one-at-a-time, so the loser of that race fails here
+      // and gets the same CONFLICT rather than starting a second export.
+      let job
+      try {
+        job = await db.scrapeJob.create({
+          data: { channelId: input.channelId, status: 'running', startedAt: new Date() },
+        })
+      } catch (err) {
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          console.warn('[job] Lost the race for the running-job slot')
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'Another scrape just started — one at a time.',
+          })
+        }
+        throw err
+      }
       console.log(`[job] Created job record id=${job.id} status=running`)
 
       try {
