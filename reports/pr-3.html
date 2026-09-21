@@ -257,9 +257,9 @@
     "verdict": "MERGED"
   },
   "score": {
-    "found": 12,
-    "fixed": 11,
-    "rebutted": 1,
+    "found": 19,
+    "fixed": 17,
+    "rebutted": 2,
     "grade": "C+"
   },
   "rounds": [
@@ -414,6 +414,86 @@
           "claudeResponse": "Restored the snapshot from the very blob the security fix removed, then re-ingested all 207 export files (513 MB), which are the source of truth the database is derived from. It now holds 241,268 messages with the FTS index in sync and the token intact — more than before, because the previous database only ever held partially ingested channels. The lesson: copy a live artefact aside before any branch operation that can touch it, which is what I did on the second switch and should have done on the first.",
           "confidence": 100,
           "status": "fixed",
+          "wouldHaveMissed": false
+        }
+      ]
+    },
+    {
+      "label": "Round 6 — CodeRabbit again",
+      "findings": [
+        {
+          "reviewer": "coderabbit",
+          "severity": "L",
+          "title": "The manual scan could run beside a scheduled one",
+          "detail": "The scheduler's guard is global but the manual SCAN's was scoped to its own channel, so a scan of channel B could start a second Docker export while a scheduled export of channel A was still running — two exports against one Discord account, the thing the one-at-a-time rule exists to prevent.",
+          "claudeResponse": "Both entry points now take the same global guard. Verified against the real database: the old query saw 0 running jobs for channel B and would have allowed it, the new one sees 1 and blocks.",
+          "confidence": 95,
+          "status": "fixed",
+          "wouldHaveMissed": true
+        },
+        {
+          "reviewer": "coderabbit",
+          "severity": "M",
+          "title": "An unparseable query returned the entire archive",
+          "detail": "A query that normalised to nothing — \"((((\" — fell through to the unfiltered path, so the search box appeared to be ignored and all 241,268 messages came back.",
+          "claudeResponse": "It now returns no results; a blank box still browses everything.",
+          "confidence": 95,
+          "status": "fixed",
+          "wouldHaveMissed": true
+        },
+        {
+          "reviewer": "coderabbit",
+          "severity": "M",
+          "title": "My installer ignored its own documented override, twice over",
+          "detail": "It tested PATH before honouring BUN, defeating the override in the one case it exists for. Its path substitution was also wrong twice: sed's delimiter, then awk's gsub, where '&' in the replacement means the matched text — a checkout under a path containing '&' silently produced a corrupt plist.",
+          "claudeResponse": "Override resolved first and checked executable; replacement is literal via index/substr. Verified against a path containing both '|' and '&'.",
+          "confidence": 100,
+          "status": "fixed",
+          "wouldHaveMissed": true
+        },
+        {
+          "reviewer": "coderabbit",
+          "severity": "M",
+          "title": "BigInt serialisation would break populated searches",
+          "detail": "Raised as a P1: raw SQLite integer columns would arrive as BigInt and fail to serialise, so any search with results would error.",
+          "claudeResponse": "Rebutted with wire-level evidence. Prisma's SQLite driver returns JS numbers for INTEGER columns that fit a double; only COUNT() aggregates come back as BigInt and those were already converted. Against the real database, seq, timestamp, attachCount and promptScore all arrive as plain numbers and populated searches return 200.",
+          "confidence": 95,
+          "status": "rebutted",
+          "wouldHaveMissed": false
+        }
+      ]
+    },
+    {
+      "label": "Round 7 — guards that did nothing",
+      "findings": [
+        {
+          "reviewer": "coderabbit",
+          "severity": "L",
+          "title": "The index self-heal could never fire",
+          "detail": "message_fts is an external-content FTS5 table, so COUNT(*) on it reads through to Message and reports the full count even when the inverted index is empty — the check could not detect the failure it guarded against, and 'integrity-check' passes on an emptied index too.",
+          "claudeResponse": "Reproduced on a copy of the real database: after 'delete-all' the count still said 241,268 while MATCH returned 0 — search silently broken, guard reporting health. It now asks the index's own shadow table, which holds thousands of rows when healthy and two when empty. Verified end to end: a search against an emptied index rebuilds it and returns hits.",
+          "confidence": 100,
+          "status": "fixed",
+          "wouldHaveMissed": true
+        },
+        {
+          "reviewer": "coderabbit",
+          "severity": "M",
+          "title": "The global guard was still check-then-write",
+          "detail": "Two SCAN requests could both pass findFirst before either inserted, so the guard was advisory rather than enforced.",
+          "claudeResponse": "A partial unique index on status='running' makes the database refuse the second insert, and the loser gets the same CONFLICT. Applied by fts-setup and by the app. Verified: the second running row is rejected with a UNIQUE constraint failure while completed jobs still coexist.",
+          "confidence": 95,
+          "status": "fixed",
+          "wouldHaveMissed": true
+        },
+        {
+          "reviewer": "coderabbit",
+          "severity": "S",
+          "title": "Non-JSON manual exports record a message count of zero",
+          "detail": "Only the JSON path counts rows, so an HTML, CSV or plain-text export is reported as containing no messages in the dashboard and sync log.",
+          "claudeResponse": "Left for the owner. A true count for those formats means parsing them; the alternative is to stop offering formats the app cannot account for. Both are product decisions rather than review fixes.",
+          "confidence": 85,
+          "status": "rebutted",
           "wouldHaveMissed": false
         }
       ]
